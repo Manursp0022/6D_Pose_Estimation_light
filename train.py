@@ -12,12 +12,6 @@ def train():
     parser.add_argument('--model', type=str, default='yolov8n.pt')
     args = parser.parse_args()
 
-    run = wandb.init(
-        project="linemod-detection",
-        config=vars(args),
-        name=f"YOLO_{args.model}_ep{args.epochs}"
-    )
-
     print(f"___Data Preparation ___")
     create_yolo_labels(args.dataset_root)
     
@@ -28,23 +22,24 @@ def train():
     print(f"___Starting training___")
     model = YOLO(args.model)
 
+
+
     model.train(
         data=config_path,
         epochs=args.epochs,
-        patience = 30,
+        patience=30,
         batch=args.batch,
         imgsz=640,
-        project=save_dir, 
-        name=f"linemod_{run.name}",
+        project=save_dir,      
+        name=f"YOLO_{args.model}_ep{args.epochs}",
         val=True,
-        save=True,             # Save checkpoint
-        exist_ok=True,
-        pretrained=True,       # pretrained COCO weights (Transfer Learning)
-        optimizer='auto',      # YOLO chooses (SGD - AdamW)
-        verbose=True           # print details
+        save=True,
+        exist_ok=False,
+        pretrained=True,
+        optimizer='auto',
+        verbose=True,
+        device=0
     )
-
-    wandb.finish()
 
 if __name__ == "__main__":
     train()
