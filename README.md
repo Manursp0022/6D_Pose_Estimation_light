@@ -1,1 +1,2 @@
-# Lab03: Setup a project from scratch
+# 6d_pose_estimation_light
+
