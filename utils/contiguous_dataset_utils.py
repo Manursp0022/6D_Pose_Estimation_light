@@ -6,6 +6,35 @@ import numpy as np
 from scipy.spatial.transform import Rotation as R
 from PIL import Image, ImageChops
 
+#Colab download function
+def download_dataset():
+    try:
+        import gdown
+    except ImportError:
+        print("gdown not found, installing...")
+        !pip install gdown -qq
+        import gdown
+
+    # Google Drive file ID for Linemod_preprocessed.zip
+    # PLEASE REPLACE 'YOUR_FILE_ID_HERE' with the actual file ID from your Google Drive.
+    # Ensure the file is shared with 'Anyone with the link' permission for gdown to work.
+    file_id = '1gO4VKeQzPXWBtC1u-Oy6o6TxSuB3JU_I'
+
+    # Destination directory for the downloaded file
+    output_dir = '/content/6D_Pose_Estimation_light/dataset/'
+    os.makedirs(output_dir, exist_ok=True)
+
+    print(f"Downloading Linemod_preprocessed.zip from Google Drive file ID: {file_id} into '{output_dir}'...")
+
+    # Download the specific file
+    !gdown --id {file_id} -O {output_dir}Linemod_preprocessed.zip
+
+    print("Download complete.")
+
+    print(f"Contents of the downloaded folder in '{output_dir}':")
+
+    !unzip /content/6D_Pose_Estimation_light/dataset/DenseFusion/Linemod_preprocessed.zip -d /content/6D_Pose_Estimation_light/dataset/
+
 def rename_rgb_items(base_dataset_path, output_directory_path):
     global_counter = 0
     print("Function 'rename_rgb_items' started.")
