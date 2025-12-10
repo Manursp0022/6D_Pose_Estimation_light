@@ -1,0 +1,69 @@
+import numpy as np
+import cv2
+
+class PoseEvaluator:
+    def __init__(self, camera_intrinsics):
+        """
+        camera_intrinsics: Matrice 3x3 [[fx, 0, cx], [0, fy, cy], [0, 0, 1]]
+        """
+        self.K = camera_intrinsics
+        self.fx = camera_intrinsics[0, 0]
+        self.fy = camera_intrinsics[1, 1]
+        self.cx = camera_intrinsics[0, 2]
+        self.cy = camera_intrinsics[1, 2]
+
+    def estimate_translation(self, bbox_2d, real_obj_diameter_mm):
+        """
+        Calcola Tx, Ty, Tz analiticamente usando il Box di YOLO.
+        bbox_2d: [x, y, w, h] in pixel
+        real_obj_diameter_mm: Diametro o dimensione massima dell'oggetto vero in mm
+        """
+        x, y, w, h = bbox_2d
+        
+        # 1. Calcolo del Centro 2D (u, v)
+        u = x + w / 2
+        v = y + h / 2
+        
+        # 2. Stima della Profondità (Tz)
+        # Usiamo la dimensione massima del box (diagonale o lato) per robustezza
+        # Assumiamo che la dimensione apparente in pixel sia proporzionale alla distanza
+        # Nota: Questa è una stima (approssimazione PnP)
+        # Tz = (focale * dimensione_reale) / dimensione_apparente
+        box_size_px = max(w, h)
+        tz = (self.fx * real_obj_diameter_mm) / box_size_px
+        
+        # 3. Back-projection per Tx e Ty
+        tx = (u - self.cx) * tz / self.fx
+        ty = (v - self.cy) * tz / self.fy
+        
+        return np.array([tx, ty, tz])
+
+    def calculate_add_metric(self, pred_R, pred_t, gt_R, gt_t, model_3d_points):
+        """
+        Calcola la metrica ADD (Average Distance of Model Points).
+        
+        pred_R: Matrice rotazione 3x3 predetta (dalla PoseNet)
+        pred_t: Vettore traslazione predetto (dalla funzione sopra)
+        gt_R, gt_t: Ground Truth
+        model_3d_points: Nuvola di punti (Nx3) dal file .ply dell'oggetto
+        """
+        # 1. Applica posa VERA ai punti del modello
+        # P_true = (R_gt * P) + t_gt
+        target_points = np.dot(model_3d_points, gt_R.T) + gt_t
+        
+        # 2. Applica posa PREDETTA ai punti del modello
+        # P_pred = (R_pred * P) + t_pred
+        estimated_points = np.dot(model_3d_points, pred_R.T) + pred_t
+        
+        # 3. Calcola la distanza Euclidea media tra i punti corrispondenti
+        # ADD = avg( || P_true - P_pred || )
+        distances = np.linalg.norm(target_points - estimated_points, axis=1)
+        add_score = np.mean(distances)
+        
+        return add_score
+
+    def is_pose_correct(self, add_score, diameter_threshold=0.1):
+        """
+        Considera la posa corretta se l'errore ADD è < 10% del diametro dell'oggetto.
+        """
+        return add_score < diameter_threshold
