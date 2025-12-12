@@ -2,6 +2,8 @@
 But be careful: the distance between quaternions is not a simple subtraction.
 A quaternion q and its opposite -q represent the exact same rotation. Loss must take this into account.
 """
+import torch
+import torch.nn as nn
 
 class QuaternionLoss(nn.Module):
     def __init__(self):

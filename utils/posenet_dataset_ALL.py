@@ -5,7 +5,7 @@ import os
 import cv2
 import numpy as np
 from torchvision import transforms
-from utils_geometric import matrix_to_quaternion, crop_square_resize
+from utils.utils_geometric import matrix_to_quaternion, crop_square_resize
 from tqdm import tqdm
 
 class LineModPoseDataset(Dataset):
