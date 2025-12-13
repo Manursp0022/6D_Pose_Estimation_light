@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from torchvision import models
 
-class PoseResNet(nn.Module):
+class RotationNet(nn.Module):
     """
     PoseResNet backbone with a small quaternion regression head.
 
@@ -28,7 +28,7 @@ class PoseResNet(nn.Module):
     """
 
     def __init__(self, pretrained: bool = True, freeze_scale: float = 0.0) -> None:
-        super(PoseResNet, self).__init__()
+        super(RotationNet, self).__init__()
         
         weights = models.ResNet50_Weights.DEFAULT if pretrained else None
         resnet = models.resnet50(weights=weights)
