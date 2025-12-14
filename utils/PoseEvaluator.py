@@ -2,41 +2,11 @@ import numpy as np
 import cv2
 
 class PoseEvaluator:
-    def __init__(self, camera_intrinsics):
+    def __init__(self):
         """
         camera_intrinsics: Matrice 3x3 [[fx, 0, cx], [0, fy, cy], [0, 0, 1]]
         """
-        self.K = camera_intrinsics
-        self.fx = camera_intrinsics[0, 0]
-        self.fy = camera_intrinsics[1, 1]
-        self.cx = camera_intrinsics[0, 2]
-        self.cy = camera_intrinsics[1, 2]
 
-    def estimate_translation(self, bbox_2d, real_obj_diameter_mm):
-        """
-        Calcola Tx, Ty, Tz analiticamente usando il Box di YOLO.
-        bbox_2d: [x, y, w, h] in pixel
-        real_obj_diameter_mm: Diametro o dimensione massima dell'oggetto vero in mm
-        """
-        x, y, w, h = bbox_2d
-        
-        # 1. Calcolo del Centro 2D (u, v)
-        u = x + w / 2
-        v = y + h / 2
-        
-        # 2. Stima della Profondità (Tz)
-        # Usiamo la dimensione massima del box (diagonale o lato) per robustezza
-        # Assumiamo che la dimensione apparente in pixel sia proporzionale alla distanza
-        # Nota: Questa è una stima (approssimazione PnP)
-        # Tz = (focale * dimensione_reale) / dimensione_apparente
-        box_size_px = max(w, h)
-        tz = (self.fx * real_obj_diameter_mm) / box_size_px
-        
-        # 3. Back-projection per Tx e Ty
-        tx = (u - self.cx) * tz / self.fx
-        ty = (v - self.cy) * tz / self.fy
-        
-        return np.array([tx, ty, tz])
 
     def calculate_add_metric(self, pred_R, pred_t, gt_R, gt_t, model_3d_points):
         """

@@ -1,6 +1,15 @@
 import numpy as np
 import cv2
 from scipy.spatial.transform import Rotation as R
+import trimesh
+
+def load_object_points(ply_path):
+    """
+    Loads vertices from a .ply file.
+    """
+    mesh = trimesh.load(ply_path)
+    # Extract the vertices (points) of the model
+    return np.array(mesh.vertices)
 
 def matrix_to_quaternion(R_matrix):
     r = R.from_matrix(R_matrix)
@@ -9,6 +18,12 @@ def matrix_to_quaternion(R_matrix):
     # Let's reorder in [w, x, y, z]
     quat_wxyz = np.array([quat_scipy[3], quat_scipy[0], quat_scipy[1], quat_scipy[2]])
     return quat_wxyz
+
+def quaternion_to_matrix(quat):
+    # quat is in [w, x, y, z]
+    r = R.from_quat([quat[1], quat[2], quat[3], quat[0]])  # reorder to [x, y, z, w]
+    R_matrix = r.as_matrix()
+    return R_matrix
 
 def crop_square_resize(img, bbox, target_size=224, jitter=True):
     h_img, w_img = img.shape[:2]
