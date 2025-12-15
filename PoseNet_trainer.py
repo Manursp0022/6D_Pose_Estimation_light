@@ -9,7 +9,7 @@ from torch.utils.data import DataLoader
 from utils.Posenet_utils.posenet_dataset_ALL import LineModPoseDataset
 from utils.Posenet_utils.utils_geometric import solve_pinhole_diameter
 from models.Posenet import PoseResNet
-from utils.quaternion_Loss import QuaternionLoss
+from utils.Posenet_utils.quaternion_Loss import QuaternionLoss
 
 class PoseNetTrainer:
     def __init__(self, config):

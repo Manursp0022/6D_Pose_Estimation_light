@@ -53,7 +53,7 @@ class LineModPoseDataset(Dataset):
                     
                 else:
                     loaded_gts[folder_id] = {} 
-                    cam_infos_cach[folder_id] = {}
+                    cam_infos_cache[folder_id] = {}
 
 
             gt_data_folder = loaded_gts[folder_id]
