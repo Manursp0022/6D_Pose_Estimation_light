@@ -148,6 +148,8 @@ class LineModPoseDataset(Dataset):
             
             #this is the dirty box
             final_bbox = torch.tensor([new_x, new_y, new_w, new_h], dtype=torch.float32)
+        else:
+            final_bbox = torch.tensor(bbox, dtype=torch.float32)
 
         img_crop = crop_square_resize(img, final_bbox, self.img_size)
 
