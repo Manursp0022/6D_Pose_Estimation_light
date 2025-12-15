@@ -67,28 +67,24 @@ def crop_square_resize(img, bbox, target_size=224):
 
 
 def solve_pinhole_diameter(bboxes, intrinsics, diameters_batch):
-    # Calcola diagonale pixel del bbox
+    # Calculate diagonal pixels of the bbox
     w_pixel = bboxes[:, 2]
     h_pixel = bboxes[:, 3]
     d_pixel = torch.sqrt(w_pixel**2 + h_pixel**2)
-
-    # --- MODIFICA QUI ---
-    # Il dataset ci dà un vettore [fx, fy, cx, cy], non una matrice 3x3.
-    # Quindi accediamo direttamente agli indici 0, 1, 2, 3.
     
     fx = intrinsics[:, 0]  # Primo valore
     fy = intrinsics[:, 1]  # Secondo valore
     cx = intrinsics[:, 2]  # Terzo valore
     cy = intrinsics[:, 3]  # Quarto valore
     
-    # Calcolo focale media
+    # Average focal length calculation
     f_avg = (fx + fy) / 2
 
-    # Z = (f * Diametro_Reale) / Diagonale_Pixel
+    # Z = (f * Actual_Diameter) / Pixel_Diagonal
     Z = (f_avg * diameters_batch) / d_pixel
 
-    # X e Y
-    # (u_center e v_center sono le coordinate centro bbox)
+    # X and Y
+    # (u_center and v_center are the bbox center coordinates)
     u_center, v_center = bboxes[:, 0], bboxes[:, 1]
     
     X = ((u_center - cx) * Z) / fx
