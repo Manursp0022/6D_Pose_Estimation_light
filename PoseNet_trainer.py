@@ -63,7 +63,7 @@ class PoseNetTrainer:
         model = PoseResNet(pretrained=True).to(self.device)
         optimizer = optim.Adam(model.parameters(), lr=self.cfg['lr'])
         scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode='min', factor=0.5, patience=self.cfg['patience']
+            optimizer, mode='min', factor=0.5, patience=self.cfg['scheduler_patience']
         )
         return model, optimizer, scheduler
 
@@ -164,9 +164,9 @@ class PoseNetTrainer:
                 print("🚀 New Best Model Saved!")
             else:
                 early_stop_counter += 1
-                print(f"⚠️ No improvement for {early_stop_counter}/{self.cfg['patience']}")
+                print(f"⚠️ No improvement for {early_stop_counter}/{self.cfg['early_stop_patience']}")
 
-            if early_stop_counter >= self.cfg['patience']:
+            if early_stop_counter >= self.cfg['early_stop_patience']:
                 print("\n⏹️ Early Stopping Triggered!")
                 break
         
