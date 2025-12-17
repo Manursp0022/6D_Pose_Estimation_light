@@ -8,7 +8,7 @@ from torch.utils.data import DataLoader
 
 from utils.Posenet_utils.posenet_dataset_ALL import LineModPoseDataset
 from utils.Posenet_utils.utils_geometric import solve_pinhole_depth
-from models.DepthNet import DepthNet
+from models.RGB_D_ResNet import PoseResNetRGBD
 from models.Posenet import PoseResNet
 from utils.Posenet_utils.quaternion_Loss import QuaternionLoss
 
@@ -31,21 +31,26 @@ class PipelineTrainer:
         self.save_dir = config['save_dir']
         os.makedirs(self.save_dir, exist_ok=True)
         
-        self.DRS = {
+        """self.DRS = {
             1: 102.09865663, 2: 247.50624233, 4: 172.49224865,
             5: 201.40358597, 6: 154.54551808, 8: 261.47178102,
             9: 108.99920102, 10: 164.62758848, 11: 175.88933422,
             12: 145.54287471, 13: 278.07811733, 14: 282.60129399,
             15: 212.35825148
-        }
+        }"""
 
         self.train_loader, self.val_loader = self._setup_data()
-        self.d_net, self.r_net, self.d_optimizer, self.r_optimizer, self.d_scheduler, self.r_scheduler = self._setup_model()
+        self.module, self.optimizer, self.scheduler = self._setup_model()
         self.criterion_trans = torch.nn.L1Loss()
         self.criterion_rot = QuaternionLoss()
         
         # Metrics
-        self.history = {'train_loss': [], 'val_loss': []}
+        self.history = {
+            'train_loss': [], 'val_loss': [],
+            'train_loss_t': [], 'val_loss_t': [],
+            'train_loss_r': [], 'val_loss_r': [],
+            'lr': [] 
+        }
 
     def _get_device(self):
         if torch.backends.mps.is_available():
@@ -64,81 +69,74 @@ class PipelineTrainer:
         val_ds = LineModPoseDataset(self.cfg['split_val'], self.cfg['dataset_root'], mode='val')
         
         train_loader = DataLoader(train_ds, batch_size=self.cfg['batch_size'], shuffle=True, num_workers=2)
-        val_loader = DataLoader(val_ds, batch_size=self.cfg['batch_size'], shuffle=False, num_workers=2)
+        val_loader = DataLoader(val_ds, batch_size=self.cfg['batch_size'], shuffle=False, num_workers=1)
         
         print(f"Data Loaded: {len(train_ds)} Train, {len(val_ds)} Val")
         return train_loader, val_loader
 
     def _setup_model(self):
-        d_net = DepthNet(pretrained=True).to(self.device)
-        d_optimizer = optim.Adam(d_net.parameters(), lr=self.cfg['lr'])
-        d_scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-            d_optimizer, mode='min', factor=0.5, patience=self.cfg['scheduler_patience']
+        module = PoseResNetRGBD(pretrained=True).to(self.device)
+        optimizer = optim.Adam(module.parameters(), lr=self.cfg['lr'])
+        scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, mode='min', factor=0.5, patience=self.cfg['scheduler_patience']
         )
-        r_net = PoseResNet(pretrained=True).to(self.device)
-        r_optimizer = optim.Adam(r_net.parameters(), lr=self.cfg['lr'])
-        r_scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-            r_optimizer, mode='min', factor=0.5, patience=self.cfg['scheduler_patience']
-        )
-        return d_net, r_net, d_optimizer, r_optimizer, d_scheduler, r_scheduler
+        return module, optimizer, scheduler
 
     def train_epoch(self, epoch):
-        # ❌ WRONG: self.model doesn't exist
-        # ✅ CORRECT: Set both networks to train mode
-        self.d_net.train()
-        self.r_net.train()
+        
+        self.module.train()
         
         running_loss = 0.0
+        running_loss_t = 0.0
+        running_loss_r = 0.0
         progress_bar = tqdm(self.train_loader, desc=f"Epoch {epoch+1}/{self.cfg['epochs']} [Train]")
         
         for batch in progress_bar:
             images = batch['image'].to(self.device)
-            depth_images = batch['depth'].to(self.device)  # ✅ Changed from 'd_image' to 'depth'
+            depth_images = batch['depth'].to(self.device)  
             bboxes = batch['bbox'].to(self.device)
             intrinsics = batch['cam_params'].to(self.device)
             gt_translation = batch['translation'].to(self.device)
             gt_quaternion = batch['quaternion'].to(self.device)
             class_ids = batch['class_id']
 
-            # ❌ WRONG: self.optimizer doesn't exist
-            # ✅ CORRECT: Zero gradients for both optimizers
-            self.d_optimizer.zero_grad()
-            self.r_optimizer.zero_grad()
+            RGBD_image = torch.cat((images, depth_images), dim=1)  # Concatenate along channel dimension
+
+            self.optimizer.zero_grad()
+            
+            
 
             # 1. Translation (DepthNet + Pinhole)
-            predicted_depths = self.d_net(depth_images)  # [B, 1] or [B]
+            r_pred, t_pred = self.module(RGBD_image)  # [B, 1] or [B]
             
-            # Make sure predicted_depths has correct shape
-            if predicted_depths.dim() > 1:
-                predicted_depths = predicted_depths.squeeze(-1)  # [B]
-            
-            pred_translation = solve_pinhole_depth(bboxes, intrinsics, predicted_depths)
-            loss_t = self.criterion_trans(pred_translation, gt_translation)
 
-            # 2. Rotation (ResNet)
-            pred_quats = self.r_net(images)
-            loss_r = self.criterion_rot(pred_quats, gt_quaternion)
+            
+            loss_t = self.criterion_trans(t_pred, gt_translation)
+
+            loss_r = self.criterion_rot(r_pred, gt_quaternion)
 
             # 3. Total Loss
             total_loss = (self.cfg['alpha'] * loss_t) + (self.cfg['beta'] * loss_r)
 
             # ✅ Backprop and optimize both networks
             total_loss.backward()
-            self.d_optimizer.step()
-            self.r_optimizer.step()
+            self.optimizer.step()
 
             running_loss += total_loss.item()
+            running_loss_t += loss_t.item()
+            running_loss_r += loss_r.item()
             progress_bar.set_postfix({'T_loss': loss_t.item(), 'R_loss': loss_r.item()})
-            
-        return running_loss / len(self.train_loader)
+            n = len(self.train_loader)
+        return running_loss / n, running_loss_t / n, running_loss_r / n
 
     def validate(self):
         # ✅ CORRECT: Set both networks to eval mode
-        self.d_net.eval()
-        self.r_net.eval()
+        self.module.eval()
         
         running_val_loss = 0.0
-        
+        running_val_loss_t = 0.0
+        running_val_loss_r = 0.0
+
         with torch.no_grad():
             for batch in tqdm(self.val_loader, desc="Validation"):
                 images = batch['image'].to(self.device)
@@ -148,50 +146,49 @@ class PipelineTrainer:
                 gt_translation = batch['translation'].to(self.device)
                 gt_quats = batch['quaternion'].to(self.device)
 
-                # Translation
-                predicted_depths = self.d_net(depth_images)
-                if predicted_depths.dim() > 1:
-                    predicted_depths = predicted_depths.squeeze(-1)
-                    
-                pred_translation = solve_pinhole_depth(bboxes, intrinsics, predicted_depths)
-                loss_t = self.criterion_trans(pred_translation, gt_translation)
+                RGBD_image = torch.cat((images, depth_images), dim=1)  # Concatenate along channel dimension
 
-                # Rotation
-                pred_quats = self.r_net(images)
-                loss_r = self.criterion_rot(pred_quats, gt_quats)
+                r_pred, t_pred = self.module(RGBD_image)  # [B, 1] or [B]
+                loss_r = self.criterion_rot(r_pred, gt_quats)
+                loss_t = self.criterion_trans(t_pred, gt_translation)
 
                 total_loss = (self.cfg['alpha'] * loss_t) + (self.cfg['beta'] * loss_r)
                 running_val_loss += total_loss.item()
-                
-        return running_val_loss / len(self.val_loader)
+                running_val_loss_t += loss_t.item()
+                running_val_loss_r += loss_r.item()
+                n = len(self.val_loader)
+        return running_val_loss / n, running_val_loss_t / n, running_val_loss_r / n
 
     def run(self):
         print(f"Starting Training for {self.cfg['epochs']} epochs...")
         best_val_loss = float('inf')
         early_stop_counter = 0
         best_d_net_state = None
-        best_r_net_state = None
 
         for epoch in range(self.cfg['epochs']):
-            train_loss = self.train_epoch(epoch)
-            val_loss = self.validate()
+            t_loss, t_loss_t, t_loss_r = self.train_epoch(epoch)
+            v_loss, v_loss_t, v_loss_r = self.validate()
             
-            self.history['train_loss'].append(train_loss)
-            self.history['val_loss'].append(val_loss)
-
-            print(f"Epoch {epoch+1}: Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f}")
-
-            self.d_scheduler.step(val_loss)
-            self.r_scheduler.step(val_loss)
+            self.history['train_loss'].append(t_loss)
+            self.history['train_loss_t'].append(t_loss_t)
+            self.history['train_loss_r'].append(t_loss_r)
             
+            self.history['val_loss'].append(v_loss)
+            self.history['val_loss_t'].append(v_loss_t)
+            self.history['val_loss_r'].append(v_loss_r)
+
+            print(f"Epoch {epoch+1}: Train Loss: {t_loss:.4f} | Val Loss: {v_loss:.4f}")
+
+            self.scheduler.step(v_loss)
+            current_lr = self.optimizer.param_groups[0]['lr']
+            self.history['lr'].append(current_lr)
             # Checkpoint & Early Stopping
-            if val_loss < best_val_loss:
-                best_val_loss = val_loss
-                best_d_net_state = copy.deepcopy(self.d_net.state_dict())
-                best_r_net_state = copy.deepcopy(self.r_net.state_dict())
+            if v_loss < best_val_loss:
+                best_val_loss = v_loss
+                best_d_net_state = copy.deepcopy(self.module.state_dict())
+                
                 early_stop_counter = 0
-                torch.save(self.d_net.state_dict(), os.path.join(self.save_dir, 'best_DepthNet_baseline.pth'))
-                torch.save(self.r_net.state_dict(), os.path.join(self.save_dir, 'best_RotationNet_baseline.pth'))
+                torch.save(self.module.state_dict(), os.path.join(self.save_dir, 'best_RGBD_ResNet.pth'))
                 print("🚀 New Best Model Saved!")
             else:
                 early_stop_counter += 1
@@ -204,12 +201,63 @@ class PipelineTrainer:
         self.plot_results()
 
     def plot_results(self):
-        plt.figure(figsize=(10, 5))
-        plt.plot(self.history['train_loss'], label='Train Loss')
-        plt.plot(self.history['val_loss'], label='Val Loss')
-        plt.xlabel('Epochs')
-        plt.ylabel('Loss')
-        plt.legend()
-        plt.title(f"Training Results (LR={self.cfg['lr']})")
-        plt.savefig(os.path.join(self.save_dir, "training_curve.png"))
+        """
+        Genera tre grafici separati per monitorare le loss e i momenti di LR drop.
+        """
+        epochs = range(len(self.history['train_loss']))
+        lr_history = self.history['lr']
+        
+        # Identifica le epoche in cui il Learning Rate è stato ridotto
+        lr_drops = [i for i in range(1, len(lr_history)) if lr_history[i] < lr_history[i-1]]
+
+        # Setup della figura con 3 subplots orizzontali
+        fig, axes = plt.subplots(1, 3, figsize=(21, 6))
+        
+        # Configurazione dei dati da plottare
+        metrics = [
+            {
+                'title': 'Total Weighted Loss',
+                'train': self.history['train_loss'],
+                'val': self.history['val_loss'],
+                'color': 'tab:blue'
+            },
+            {
+                'title': f'Translation Loss (Alpha={self.cfg["alpha"]})',
+                'train': self.history['train_loss_t'],
+                'val': self.history['val_loss_t'],
+                'color': 'tab:orange'
+            },
+            {
+                'title': f'Rotation Loss (Beta={self.cfg["beta"]})',
+                'train': self.history['train_loss_r'],
+                'val': self.history['val_loss_r'],
+                'color': 'tab:green'
+            }
+        ]
+
+        for i, m in enumerate(metrics):
+            ax = axes[i]
+            # Plot linee principali
+            ax.plot(epochs, m['train'], label='Train', color=m['color'], alpha=0.4, linestyle='--')
+            ax.plot(epochs, m['val'], label='Validation', color=m['color'], linewidth=2)
+            
+            # Aggiunta linee verticali per ogni LR Drop
+            for drop_idx in lr_drops:
+                ax.axvline(x=drop_idx, color='red', linestyle=':', linewidth=1.5, 
+                           label='LR Drop' if drop_idx == lr_drops[0] else "")
+            
+            # Estetica e labels
+            ax.set_title(m['title'], fontsize=14, fontweight='bold')
+            ax.set_xlabel('Epochs')
+            ax.set_ylabel('Loss Value')
+            ax.grid(True, which="both", alpha=0.3)
+            ax.legend(loc='upper right')
+
+        plt.suptitle("6D Pose Estimation Training Analysis", fontsize=16, y=1.02)
+        plt.tight_layout()
+        
+        # Salvataggio e visualizzazione
+        plot_path = os.path.join(self.save_dir, "training_metrics_split.png")
+        plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+        print(f"✅ Grafici salvati correttamente in: {plot_path}")
         plt.show()
