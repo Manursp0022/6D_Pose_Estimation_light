@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from torchvision import models
-
+import numpy as np
 class SEBlock(nn.Module):
     """Squeeze-and-Excitation block per calibrare l'importanza dei canali."""
     def __init__(self, channels, reduction=16):
@@ -21,13 +21,19 @@ class SEBlock(nn.Module):
         return x * y.expand_as(x)
 
 class PoseResNetRGBD(nn.Module):
-    def __init__(self, pretrained=True):
+    def __init__(self, pretrained=True, intrinsics=None):
         super(PoseResNetRGBD, self).__init__()
         
         # Carichiamo il backbone ResNet50
         weights = models.ResNet50_Weights.DEFAULT if pretrained else None
         resnet = models.resnet50(weights=weights)
-        
+        intrinsics = [572.4114, 0.0, 325.2611, 0.0, 573.57043, 242.04899, 0.0, 0.0, 1.0]
+        self.fx = intrinsics[0]
+        self.fy = intrinsics[4]
+        self.cx = intrinsics[2]
+        self.cy = intrinsics[5]
+
+        self.register_buffer('cam_constants', torch.tensor([self.fx, self.fy, self.cx, self.cy], dtype=torch.float32))
         # --- MODIFICA 1: Input a 4 canali (RGB + Depth) ---
         # Prendiamo i pesi del primo strato (3 canali) e inizializziamo il 4° canale 
         # con la media dei primi tre o con una copia del canale red.
@@ -67,26 +73,30 @@ class PoseResNetRGBD(nn.Module):
             resnet.maxpool
         )
         self.avgpool = resnet.avgpool
-        feature_dim = 2048
-        
-        # --- MODIFICA 3: Due Teste di Regressione ---
-        # Testa per la Rotazione (Quaternione)
-        self.rotation_head = nn.Sequential(
-            nn.Linear(feature_dim, 1024),
+        feature_dim = 2048 
+        # Input: 2 (bbox center dinamico) + 4 (costanti camera) = 6
+        self.info_fc = nn.Sequential(
+            nn.Linear(6, 64),
             nn.ReLU(inplace=True),
-            nn.Dropout(0.5),
+            nn.Linear(64, 64),
+            nn.ReLU(inplace=True)
+        )
+        
+        combined_dim = feature_dim + 64
+        
+        self.rotation_head = nn.Sequential(
+            nn.Linear(combined_dim, 1024),
+            nn.ReLU(inplace=True),
             nn.Linear(1024, 4)
         )
         
-        # Testa per la Traslazione (X, Y, Z)
         self.translation_head = nn.Sequential(
-            nn.Linear(feature_dim, 1024),
+            nn.Linear(combined_dim, 1024),
             nn.ReLU(inplace=True),
-            nn.Dropout(0.5),
             nn.Linear(1024, 3)
         )
 
-    def forward(self, x):
+    def forward(self, x, bbox_center):
         # x deve avere shape (B, 4, H, W)
         
         # Feature extraction con SE Blocks
@@ -99,9 +109,22 @@ class PoseResNetRGBD(nn.Module):
         x = self.avgpool(x)
         x = torch.flatten(x, 1)
         
-        # Head prediction
-        rot = self.rotation_head(x)
-        trans = self.translation_head(x)
+        img_feat = self.extract_visual_features(x) 
+        
+        # 2. Smistamento e Concatenazione delle info geometriche
+        batch_size = x.size(0)
+        # Ripetiamo le costanti per ogni elemento del batch
+        static_info = self.cam_constants.unsqueeze(0).expand(batch_size, -1)
+        
+        # Vettore completo [B, 6]: [center_x, center_y, fx, fy, cx, cy]
+        geom_info = torch.cat([bbox_center, static_info], dim=1)
+        geom_feat = self.info_fc(geom_info)
+        
+        # 3. Fusion e Predizione
+        combined = torch.cat((img_feat, geom_feat), dim=1)
+        
+        rot = self.rotation_head(combined)
+        trans = self.translation_head(combined)
         
         # Normalizzazione quaternione
         rot = torch.nn.functional.normalize(rot, p=2, dim=1)

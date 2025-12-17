@@ -7,9 +7,7 @@ from tqdm import tqdm
 from torch.utils.data import DataLoader
 
 from utils.Posenet_utils.posenet_dataset_ALL import LineModPoseDataset
-from utils.Posenet_utils.utils_geometric import solve_pinhole_depth
 from models.RGB_D_ResNet import PoseResNetRGBD
-from models.Posenet import PoseResNet
 from utils.Posenet_utils.quaternion_Loss import QuaternionLoss
 
 
@@ -95,23 +93,26 @@ class PipelineTrainer:
             images = batch['image'].to(self.device)
             depth_images = batch['depth'].to(self.device)  
             bboxes = batch['bbox'].to(self.device)
-            intrinsics = batch['cam_params'].to(self.device)
             gt_translation = batch['translation'].to(self.device)
             gt_quaternion = batch['quaternion'].to(self.device)
-            class_ids = batch['class_id']
 
             RGBD_image = torch.cat((images, depth_images), dim=1)  # Concatenate along channel dimension
 
             self.optimizer.zero_grad()
             
-            
+            bx = (bboxes[:, 0] + bboxes[:, 2]) / 2.0
+            by = (bboxes[:, 1] + bboxes[:, 3]) / 2.0
+
+            bx_norm = bx / 640.0 
+            by_norm = by / 480.0
+            bbox_center = torch.stack([bx_norm, by_norm], dim=1)
 
             # 1. Translation (DepthNet + Pinhole)
-            r_pred, t_pred = self.module(RGBD_image)  # [B, 1] or [B]
+            r_pred, t_pred = self.module(RGBD_image, bbox_center)  # [B, 1] or [B]
             
 
             
-            loss_t = self.criterion_trans(t_pred, gt_translation)
+            loss_t = self.criterion_trans(t_pred, gt_translation/1000.0)  # Convert mm to meters
 
             loss_r = self.criterion_rot(r_pred, gt_quaternion)
 

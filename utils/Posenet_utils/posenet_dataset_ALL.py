@@ -116,10 +116,10 @@ class LineModPoseDataset(Dataset):
             transforms.ToTensor(),
         ])
 
-    def _compute_max_depth(self, sample_ratio=0.1):
-        """
+    """def _compute_max_depth(self, sample_ratio=0.1):
+        
         Compute max depth (99th percentile) from a sample of the dataset
-        """
+        
         import random
         
         # Sample 10% of dataset for speed (min 50 samples)
@@ -150,7 +150,7 @@ class LineModPoseDataset(Dataset):
         print(f"    99th percentile: {p99:.2f} mm")
         print(f"    Mean: {max_values.mean():.2f} mm")
         
-        return p99
+        return p99"""
 
     def __len__(self):
         return len(self.samples)
