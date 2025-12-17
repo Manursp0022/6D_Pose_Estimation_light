@@ -117,7 +117,7 @@ class PoseResNetRGBD(nn.Module):
         x = self.avgpool(x)
         x = torch.flatten(x, 1)
         
-        img_feat = self.extract_visual_features(x) 
+        
         
         # 2. Smistamento e Concatenazione delle info geometriche
         batch_size = x.size(0)
@@ -129,7 +129,7 @@ class PoseResNetRGBD(nn.Module):
         geom_feat = self.info_fc(geom_info)
         
         # 3. Fusion e Predizione
-        combined = torch.cat((img_feat, geom_feat), dim=1)
+        combined = torch.cat((x, geom_feat), dim=1)
         
         rot = self.rotation_head(combined)
         trans = self.translation_head(combined)
