@@ -150,11 +150,11 @@ class PipelineTrainer:
         running_val_loss_r = 0.0
         valid_samples = 0
         skipped_samples = 0
-        
+
         with torch.no_grad():
             for batch in tqdm(self.val_loader, desc="Validation"):
                 
-                path = batch['path'].to(self.device)
+                path = batch['path']
                 
                 gt_translation = batch['translation'].to(self.device)
                 gt_class = batch.get['class_id'].to(self.device)
