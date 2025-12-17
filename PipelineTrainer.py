@@ -9,8 +9,9 @@ from torch.utils.data import DataLoader
 from utils.Posenet_utils.posenet_dataset_ALL import LineModPoseDataset
 from models.RGB_D_ResNet import PoseResNetRGBD
 from utils.Posenet_utils.quaternion_Loss import QuaternionLoss
-
-
+from utils.Posenet_utils.utils_geometric import crop_square_resize, image_transformation
+import ultralytics
+import cv2
 
 """
 TranslationNet + RotationNet training pipeline.
@@ -28,6 +29,10 @@ class PipelineTrainer:
         self.device = self._get_device()
         self.save_dir = config['save_dir']
         os.makedirs(self.save_dir, exist_ok=True)
+        self.yolo_to_folder = {
+        0: '01', 1: '02', 2: '04', 3: '05', 4: '06', 5: '08',
+        6: '09', 7: '10', 8: '11', 9: '12', 10: '13', 11: '14', 12: '15'
+    }
         
         """self.DRS = {
             1: 102.09865663, 2: 247.50624233, 4: 172.49224865,
@@ -41,6 +46,7 @@ class PipelineTrainer:
         self.module, self.optimizer, self.scheduler = self._setup_model()
         self.criterion_trans = torch.nn.L1Loss()
         self.criterion_rot = QuaternionLoss()
+        self.yolo = self._setup_yolo()
         
         # Metrics
         self.history = {
@@ -49,7 +55,10 @@ class PipelineTrainer:
             'train_loss_r': [], 'val_loss_r': [],
             'lr': [] 
         }
-
+    def _setup_yolo(self):
+        # Carica il modello YOLOv8 pre-addestrato
+        yolo_model = ultralytics.YOLO(self.cfg['yolo_weights']).to(self.device)
+        return yolo_model
     def _get_device(self):
         if torch.backends.mps.is_available():
             print("Using Apple MPS acceleration.")
@@ -107,6 +116,7 @@ class PipelineTrainer:
             by_norm = by / 480.0
             bbox_center = torch.stack([bx_norm, by_norm], dim=1)
 
+            
             # 1. Translation (DepthNet + Pinhole)
             r_pred, t_pred = self.module(RGBD_image, bbox_center)  # [B, 1] or [B]
             
@@ -133,32 +143,121 @@ class PipelineTrainer:
     def validate(self):
         # ✅ CORRECT: Set both networks to eval mode
         self.module.eval()
-        
+        self.yolo.eval()
+
         running_val_loss = 0.0
         running_val_loss_t = 0.0
         running_val_loss_r = 0.0
-
+        valid_samples = 0
+        skipped_samples = 0
+        
         with torch.no_grad():
             for batch in tqdm(self.val_loader, desc="Validation"):
-                images = batch['image'].to(self.device)
-                depth_images = batch['depth'].to(self.device)  # ✅ Fixed
-                bboxes = batch['bbox'].to(self.device)
-                intrinsics = batch['cam_params'].to(self.device)
+                
+                path = batch['path'].to(self.device)
+                
                 gt_translation = batch['translation'].to(self.device)
+                gt_class = batch.get['class_id'].to(self.device)
                 gt_quats = batch['quaternion'].to(self.device)
 
-                RGBD_image = torch.cat((images, depth_images), dim=1)  # Concatenate along channel dimension
+                yolo_outputs = self.yolo(path).to(self.device)  # Assuming images are in the correct format for YOLO
 
-                r_pred, t_pred = self.module(RGBD_image)  # [B, 1] or [B]
-                loss_r = self.criterion_rot(r_pred, gt_quats)
-                loss_t = self.criterion_trans(t_pred, gt_translation)
+                batch_size = gt_translation.shape[0]
+                for i in range(batch_size):
+                    # Get YOLO detections for this image
+                    detections = yolo_outputs[i].boxes
+                    
+                    # Check if YOLO detected any objects
+                    if len(detections) == 0:
+                        skipped_samples += 1
+                        continue
+                    
+                    # Get the detection with highest confidence
+                    confidences = detections.conf
+                    best_idx = torch.argmax(confidences)
+                    predicted_class = int(detections.cls[best_idx])
+                    predicted_bbox = detections.xywh[best_idx]  # [x1, y1, x2, y2]
+                    
+                    # Optional: Check if predicted class matches ground truth
+                    # If gt_class is available, you can verify correct detection
+                    if gt_class is not None and self.yolo_to_folder[predicted_class] != gt_class[i]:
+                        skipped_samples += 1
+                        continue
+                    
+                    # Calculate bbox center from YOLO prediction
+                    bx = predicted_bbox[0]
+                    by = predicted_bbox[1] 
+                    
+                    # Normalize bbox center
+                    bx_norm = bx / 640.0
+                    by_norm = by / 480.0
+                    bbox_center = torch.stack([bx_norm, by_norm], dim=0).unsqueeze(0)  # [1, 2]
+                    
+                    img = cv2.imread(path[i])
+                    if img is None:
+                        print(f"Warning: Could not load image {path[i]}")
+                        skipped_samples += 1
+                        continue
+                    
+                    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                    
 
-                total_loss = (self.cfg['alpha'] * loss_t) + (self.cfg['beta'] * loss_r)
-                running_val_loss += total_loss.item()
-                running_val_loss_t += loss_t.item()
-                running_val_loss_r += loss_r.item()
-                n = len(self.val_loader)
-        return running_val_loss / n, running_val_loss_t / n, running_val_loss_r / n
+                    depth_path = path[i].replace('rgb', 'depth')
+                    d_img = cv2.imread(depth_path, cv2.IMREAD_UNCHANGED)
+                    
+                    if d_img is None:
+                        print(f"Warning: Could not load depth image for {depth_path[i]}")
+                        skipped_samples += 1
+                        continue
+                    
+                    # Crop and resize based on YOLO bbox (xywh -> xyxy conversion done above)
+                    img_cropped = crop_square_resize(img, predicted_bbox, self.img_size, is_depth=False)
+                    d_img_cropped = crop_square_resize(d_img, predicted_bbox, self.img_size, is_depth=True)
+                    
+                    # Convert RGB to tensor and normalize
+                    img_tensor = image_transformation(img_cropped)  # Apply ImageNet normalization
+                    img_tensor = img_tensor.unsqueeze(0).to(self.device)  # [1, 3, H, W]
+                    
+                    # Convert depth to tensor (no normalization)
+                    if len(d_img_cropped.shape) == 2:  # Grayscale depth
+                        depth_tensor = torch.from_numpy(d_img_cropped).float().unsqueeze(0).unsqueeze(0)
+                    else:  # If depth has channels
+                        depth_tensor = torch.from_numpy(d_img_cropped).float().permute(2, 0, 1).unsqueeze(0)
+                    depth_tensor = depth_tensor.to(self.device)  # [1, 1, H, W]
+                    
+                    # Concatenate RGB and Depth
+                    RGBD_image = torch.cat((img_tensor, depth_tensor), dim=1)  # [1, 4, H, W]
+
+
+                    depth_tensor = torch.from_numpy(d_img).float().unsqueeze(0)
+                    RGBD_image = torch.cat((img, depth_tensor), dim=1)
+                    
+                    # Forward pass through pose network
+                    r_pred, t_pred = self.module(RGBD_image, bbox_center)
+                    
+                    # Calculate losses
+                    loss_r = self.criterion_rot(r_pred, gt_quats[i:i+1])
+                    loss_t = self.criterion_trans(t_pred, gt_translation[i:i+1] / 1000.0)
+                    
+                    total_loss = (self.cfg['alpha'] * loss_t) + (self.cfg['beta'] * loss_r)
+                    
+                    running_val_loss += total_loss.item()
+                    running_val_loss_t += loss_t.item()
+                    running_val_loss_r += loss_r.item()
+                    valid_samples += 1
+        
+        # Print statistics
+        total_samples = valid_samples + skipped_samples
+        if total_samples > 0:
+            print(f"\nValidation Stats: {valid_samples}/{total_samples} samples used "
+                  f"({100*valid_samples/total_samples:.1f}%), {skipped_samples} skipped")
+        
+        # Avoid division by zero
+        if valid_samples == 0:
+            print("⚠️ Warning: No valid samples detected by YOLO during validation!")
+            return float('inf'), float('inf'), float('inf')
+        
+        return running_val_loss / valid_samples, running_val_loss_t / valid_samples, running_val_loss_r / valid_samples
 
     def run(self):
         print(f"Starting Training for {self.cfg['epochs']} epochs...")

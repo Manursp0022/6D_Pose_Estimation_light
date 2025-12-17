@@ -2,6 +2,7 @@ import numpy as np
 import torch
 import cv2
 from scipy.spatial.transform import Rotation as R
+from torchvision import transforms
 
 def matrix_to_quaternion(R_matrix):
     r = R.from_matrix(R_matrix)
@@ -10,6 +11,24 @@ def matrix_to_quaternion(R_matrix):
     # Let's reorder in [w, x, y, z]
     quat_wxyz = np.array([quat_scipy[3], quat_scipy[0], quat_scipy[1], quat_scipy[2]])
     return quat_wxyz
+def image_transformation(img):
+    """
+    Trasforma l'immagine in un tensore normalizzato per il modello.
+    Args:
+        img: Immagine RGB come array numpy (H, W, 3)
+    Returns:
+        img_tensor: Tensore PyTorch normalizzato (3, H, W)
+        """
+    transform = transforms.Compose([
+        transforms.ToTensor(),  # Converte in tensore e scala [0, 255] a [0, 1]
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], 
+                             std=[0.229, 0.224, 0.225])  # Normalizzazione ImageNet
+    ])
+    
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    img_tensor = torch.from_numpy(img).float().permute(2, 0, 1) / 255.0  # [3, H, W], [0, 1]
+    return img_tensor
+
 
 def crop_square_resize(img, bbox, target_size=224, is_depth=False):
     """
