@@ -160,7 +160,7 @@ class PipelineTrainer:
                 gt_class = batch['class_id'].to(self.device)
                 gt_quats = batch['quaternion'].to(self.device)
 
-                yolo_outputs = self.yolo(path).to(self.device)  # Assuming images are in the correct format for YOLO
+                yolo_outputs = self.yolo(path)  # Assuming images are in the correct format for YOLO
 
                 batch_size = gt_translation.shape[0]
                 for i in range(batch_size):
