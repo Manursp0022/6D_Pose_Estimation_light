@@ -101,8 +101,6 @@ class LineModPoseDataset(Dataset):
                     self.samples.append(sample)
 
         print(f"[{mode.upper()}] Generated {len(self.samples)} samples from {len(image_paths_raw)} images.")
-
-        # Compute max_depth from the dataset
         
 
         self.transform = transforms.Compose([
@@ -176,7 +174,6 @@ class LineModPoseDataset(Dataset):
         
         final_bbox = bbox
         d_img = d_img.astype(np.float32)
-        d_img = np.clip(d_img, 0, self.max_depth) / self.max_depth
 
         if self.mode == 'train':
             x, y, w, h = final_bbox
