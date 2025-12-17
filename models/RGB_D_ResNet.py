@@ -23,11 +23,19 @@ class SEBlock(nn.Module):
 class PoseResNetRGBD(nn.Module):
     def __init__(self, pretrained=True, intrinsics=None):
         super(PoseResNetRGBD, self).__init__()
+        """
+        Modello PoseNet che utilizza input RGB-D (4 canali).
+        - Input: Immagine RGB-D (4 canali)
+        - Output: Quaternione (4) + Traslazione (3)
+        intrinsics: Lista o tensor con i parametri intrinseci della camera [fx, 0, cx, 0, fy, cy, 0, 0, 1]
+        se None, usa valori di default LINEMOD.
+        """
         
         # Carichiamo il backbone ResNet50
         weights = models.ResNet50_Weights.DEFAULT if pretrained else None
         resnet = models.resnet50(weights=weights)
-        intrinsics = [572.4114, 0.0, 325.2611, 0.0, 573.57043, 242.04899, 0.0, 0.0, 1.0]
+        if intrinsics is None:
+            intrinsics = [572.4114, 0.0, 325.2611, 0.0, 573.57043, 242.04899, 0.0, 0.0, 1.0]
         self.fx = intrinsics[0]
         self.fy = intrinsics[4]
         self.cx = intrinsics[2]
