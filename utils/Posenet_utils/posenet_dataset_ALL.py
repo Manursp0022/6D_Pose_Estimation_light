@@ -36,6 +36,8 @@ class LineModPoseDataset(Dataset):
             img_name = parts[-1]
             img_id_num = int(img_name.replace('.png', '')) 
 
+            d_img_path_abs = os.path.join(self.dataset_root, 'data', folder_id, 'depth', img_name)
+
             # Gestione Path Assoluto per il caricamento immagine dopo
             if not os.path.exists(img_path_abs):
                  img_path_abs = os.path.join(self.dataset_root, 'data', folder_id, 'rgb', img_name)
@@ -53,7 +55,7 @@ class LineModPoseDataset(Dataset):
                     
                 else:
                     loaded_gts[folder_id] = {} 
-                    cam_infos_cach[folder_id] = {}
+                    cam_infos_cache[folder_id] = {}
 
 
             gt_data_folder = loaded_gts[folder_id]
@@ -88,6 +90,7 @@ class LineModPoseDataset(Dataset):
 
                     sample = {
                         'img_path': img_path_abs,
+                        'depth_path': d_img_path_abs,
                         'obj_id': obj_id,
                         'bbox': obj['obj_bb'],
                         'R': obj['cam_R_m2c'],
@@ -103,6 +106,10 @@ class LineModPoseDataset(Dataset):
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         ])
 
+        self.d_transform= transforms.Compose([
+            transforms.ToTensor(),
+        ])
+
     def __len__(self):
         return len(self.samples)
 
@@ -116,10 +123,16 @@ class LineModPoseDataset(Dataset):
         else:
              img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
+        d_img = cv2.imread(sample['depth_path'], cv2.IMREAD_ANYDEPTH)
+        if d_img is None:
+            d_img = np.zeros((480, 640), dtype=np.uint16)
+        
+
         bbox = sample['bbox']
         R_matrix = np.array(sample['R']).reshape(3, 3)
         t_vector = np.array(sample['t'])
         target_obj_id = sample['obj_id']
+        
 
 
         final_bbox = bbox
@@ -150,10 +163,11 @@ class LineModPoseDataset(Dataset):
             final_bbox = torch.tensor([new_x, new_y, new_w, new_h], dtype=torch.float32)
 
         img_crop = crop_square_resize(img, final_bbox, self.img_size)
-
+        d_img_crop = crop_square_resize(d_img, final_bbox, self.img_size, is_depth=True)
         quaternion = matrix_to_quaternion(R_matrix)
         
         img_tensor = self.transform(img_crop)
+        d_img_tensor = self.d_transform(d_img_crop)
         quat_tensor = torch.from_numpy(quaternion).float()
         trans_tensor = torch.from_numpy(t_vector).float() / 1000.0
 
@@ -164,6 +178,7 @@ class LineModPoseDataset(Dataset):
         
         return {
             'image': img_tensor,
+            'd_image': d_img_tensor,
             'quaternion': quat_tensor,
             'translation': trans_tensor,
             'class_id': target_obj_id,

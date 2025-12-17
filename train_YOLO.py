@@ -2,7 +2,7 @@ import argparse
 import os 
 import wandb
 from ultralytics import YOLO, settings
-from utils.yolo_utils import create_yolo_labels, create_yolo_config
+from utils.YOLO_utils.yolo_utils_train_all import create_yolo_labels, create_yolo_config
 
 def train():
     parser = argparse.ArgumentParser()
