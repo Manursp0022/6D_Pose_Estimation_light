@@ -106,3 +106,33 @@ def solve_pinhole_diameter(bboxes, intrinsics, diameters_batch):
     Y = ((v_center - cy) * Z) / fy
 
     return torch.stack([X, Y, Z], dim=1)
+
+def solve_pinhole_depth(bboxes, intrinsics, predicted_depths):
+    """
+    Calculate 3D position using predicted depth from depth model
+    
+    Args:
+        bboxes: [B, 4] tensor of [x_center, y_center, width, height]
+        intrinsics: [B, 4] tensor of [fx, fy, cx, cy]
+        predicted_depths: [B] tensor of predicted Z distances (in meters or mm)
+    
+    Returns:
+        [B, 3] tensor of [X, Y, Z] positions
+    """
+    fx = intrinsics[:, 0]
+    fy = intrinsics[:, 1]
+    cx = intrinsics[:, 2]
+    cy = intrinsics[:, 3]
+    
+    # Use predicted depth directly as Z
+    Z = predicted_depths
+    
+    # Calculate X and Y using pinhole camera model
+    # (u_center and v_center are the bbox center coordinates)
+    u_center = bboxes[:, 0]
+    v_center = bboxes[:, 1]
+    
+    X = ((u_center - cx) * Z) / fx
+    Y = ((v_center - cy) * Z) / fy
+
+    return torch.stack([X, Y, Z], dim=1)
