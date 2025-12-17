@@ -19,7 +19,7 @@ class LineModPoseDataset(Dataset):
         with open(split_file, 'r') as f:
             image_paths_raw = [line.strip() for line in f.readlines() if line.strip()]
 
-        print(f"[{mode.upper()}] Indicizzazione dataset (Scene-Level Augmentation)...")
+        print(f"[{mode.upper()}] Dataset indexing (Scene-Level Augmentation)...")
         
         # We preload the GTs so we don't have to reopen them a thousand times.
         #    And we build the list of samples.
@@ -148,14 +148,16 @@ class LineModPoseDataset(Dataset):
             
             #this is the dirty box
             final_bbox = torch.tensor([new_x, new_y, new_w, new_h], dtype=torch.float32)
+            img = crop_square_resize(img, final_bbox, self.img_size)
+            img_tensor = self.transform(img)
         else:
             final_bbox = torch.tensor(bbox, dtype=torch.float32)
+            img_crop = cv2.resize(img, (224, 224)) # Dummy resize per non rompere il transform dopo
 
-        img_crop = crop_square_resize(img, final_bbox, self.img_size)
+        #img_crop = crop_square_resize(img, final_bbox, self.img_size)
 
         quaternion = matrix_to_quaternion(R_matrix)
         
-        img_tensor = self.transform(img_crop)
         quat_tensor = torch.from_numpy(quaternion).float()
         trans_tensor = torch.from_numpy(t_vector).float() / 1000.0
 
@@ -163,14 +165,24 @@ class LineModPoseDataset(Dataset):
         cam_params = torch.tensor([params[0],params[1], params[2], params[3]], dtype=torch.float32)
         #pos_features = list(final_bbox) + list(cam_params)
         #rot_tensor = torch.tensor(pos_features, dtype=torch.float32)
-        
-        return {
-            'image': img_tensor,
-            'quaternion': quat_tensor,
-            'translation': trans_tensor,
-            'class_id': target_obj_id,
-            'path': sample['img_path'],
-            'bbox': final_bbox,
-            'cam_params': cam_params
-            #'posnet_input': rot_tensor
-        }
+
+        if self.mode == 'train':
+            return {
+                'image': img_tensor,
+                'quaternion': quat_tensor,
+                'translation': trans_tensor,
+                'class_id': target_obj_id,
+                'path': sample['img_path'],
+                'bbox': final_bbox,
+                'cam_params': cam_params
+                #'posnet_input': rot_tensor
+            }
+        else:
+            return {
+                'quaternion': quat_tensor,
+                'translation': trans_tensor,
+                'class_id': target_obj_id,
+                'path': sample['img_path'],
+                'bbox': final_bbox,
+                'cam_params': cam_params
+            }
