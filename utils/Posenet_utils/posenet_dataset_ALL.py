@@ -19,7 +19,7 @@ class LineModPoseDataset(Dataset):
         with open(split_file, 'r') as f:
             image_paths_raw = [line.strip() for line in f.readlines() if line.strip()]
 
-        print(f"[{mode.upper()}] Indicizzazione dataset (Scene-Level Augmentation)...")
+        print(f"[{mode.upper()}] Dataset indexing (Scene-Level Augmentation)...")
         
         # We preload the GTs so we don't have to reopen them a thousand times.
         #    And we build the list of samples.
@@ -113,9 +113,10 @@ class LineModPoseDataset(Dataset):
     def __len__(self):
         return len(self.samples)
 
-    def __getitem__(self, idx):
+def __getitem__(self, idx):
         sample = self.samples[idx]
         
+        # Load RGB image
         img = cv2.imread(sample['img_path'])
         if img is None:
              # Brutal fallback to avoid stopping training: generate black image
@@ -123,18 +124,16 @@ class LineModPoseDataset(Dataset):
         else:
              img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
+        # Load Depth image
         d_img = cv2.imread(sample['depth_path'], cv2.IMREAD_ANYDEPTH)
         if d_img is None:
             d_img = np.zeros((480, 640), dtype=np.uint16)
         
-
         bbox = sample['bbox']
         R_matrix = np.array(sample['R']).reshape(3, 3)
         t_vector = np.array(sample['t'])
         target_obj_id = sample['obj_id']
         
-
-
         final_bbox = bbox
         
         if self.mode == 'train':
@@ -147,7 +146,7 @@ class LineModPoseDataset(Dataset):
             noise_x = np.random.uniform(-0.05, 0.05) * w
             noise_y = np.random.uniform(-0.05, 0.05) * h
             
-            # casual scale (+/- 5%
+            # casual scale (+/- 5%)
             scale = np.random.uniform(0.95, 1.05)
             
             # Jitter
@@ -159,31 +158,63 @@ class LineModPoseDataset(Dataset):
             new_x = new_cx - new_w / 2
             new_y = new_cy - new_h / 2
             
-            #this is the dirty box
-            final_bbox = torch.tensor([new_x, new_y, new_w, new_h], dtype=torch.float32)
+            # This is the dirty box
+            final_bbox = [new_x, new_y, new_w, new_h]
+            
+            # Crop both RGB and depth with the same bbox
+            img = crop_square_resize(img, final_bbox, self.img_size, is_depth=False)
+            d_img = crop_square_resize(d_img, final_bbox, self.img_size, is_depth=True)
+            
+            # Transform RGB
+            img_tensor = self.transform(img)
+            
+            # Transform depth to tensor
+            depth_tensor = torch.from_numpy(d_img).float().unsqueeze(0)
+            # Normalize depth (choose appropriate method)
+            if depth_tensor.max() > 0:
+                depth_tensor = depth_tensor / depth_tensor.max()  # Scale to [0, 1]
+            
+            final_bbox = torch.tensor(final_bbox, dtype=torch.float32)
+        else:
+            # Validation/Test mode
+            final_bbox = torch.tensor(bbox, dtype=torch.float32)
+            img = cv2.resize(img, (224, 224))
+            d_img = cv2.resize(d_img, (224, 224), interpolation=cv2.INTER_NEAREST)
+            
+            # Transform RGB
+            img_tensor = self.transform(img)
+            
+            # Transform depth to tensor
+            depth_tensor = torch.from_numpy(d_img).float().unsqueeze(0)
+            if depth_tensor.max() > 0:
+                depth_tensor = depth_tensor / depth_tensor.max()
 
-        img_crop = crop_square_resize(img, final_bbox, self.img_size)
-        d_img_crop = crop_square_resize(d_img, final_bbox, self.img_size, is_depth=True)
         quaternion = matrix_to_quaternion(R_matrix)
         
-        img_tensor = self.transform(img_crop)
-        d_img_tensor = self.d_transform(d_img_crop)
         quat_tensor = torch.from_numpy(quaternion).float()
         trans_tensor = torch.from_numpy(t_vector).float() / 1000.0
 
         params = sample['position_input'] 
-        cam_params = torch.tensor([params[0],params[1], params[2], params[3]], dtype=torch.float32)
-        #pos_features = list(final_bbox) + list(cam_params)
-        #rot_tensor = torch.tensor(pos_features, dtype=torch.float32)
-        
-        return {
-            'image': img_tensor,
-            'd_image': d_img_tensor,
-            'quaternion': quat_tensor,
-            'translation': trans_tensor,
-            'class_id': target_obj_id,
-            'path': sample['img_path'],
-            'bbox': final_bbox,
-            'cam_params': cam_params
-            #'posnet_input': rot_tensor
-        }
+        cam_params = torch.tensor([params[0], params[1], params[2], params[3]], dtype=torch.float32)
+
+        if self.mode == 'train':
+            return {
+                'image': img_tensor,
+                'depth': depth_tensor,
+                'quaternion': quat_tensor,
+                'translation': trans_tensor,
+                'class_id': target_obj_id,
+                'path': sample['img_path'],
+                'bbox': final_bbox,
+                'cam_params': cam_params
+            }
+        else:
+            return {
+                
+                'quaternion': quat_tensor,
+                'translation': trans_tensor,
+                'class_id': target_obj_id,
+                'path': sample['img_path'],
+                'bbox': final_bbox,
+                'cam_params': cam_params
+            }

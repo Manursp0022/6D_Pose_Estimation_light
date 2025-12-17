@@ -42,9 +42,9 @@ class PoseEvaluator:
         estimated_points = np.dot(model_3d_points, pred_R.T) + pred_t
 
         if obj_id in self.symmetric_obj_ids : 
-            return self._calculate_add_s()
+            return self._calculate_add_s(target_points, estimated_points)
         else:
-            return self._calculate_add()
+            return self._calculate_add(target_points, estimated_points)
     
     def _calculate_add(self, target_points, estimated_points):
         """
