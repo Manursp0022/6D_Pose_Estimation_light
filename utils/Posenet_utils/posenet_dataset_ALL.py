@@ -249,7 +249,8 @@ class LineModPoseDataset(Dataset):
             }
         else:
             return {
-
+                'image': img_tensor,
+                'depth': depth_tensor,
                 'quaternion': quat_tensor,
                 'translation': trans_tensor,
                 'class_id': target_obj_id,
