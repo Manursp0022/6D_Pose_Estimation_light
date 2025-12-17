@@ -103,9 +103,7 @@ class LineModPoseDataset(Dataset):
         print(f"[{mode.upper()}] Generated {len(self.samples)} samples from {len(image_paths_raw)} images.")
 
         # Compute max_depth from the dataset
-        print(f"[{mode.upper()}] Computing max depth from dataset...")
-        self.max_depth = self._compute_max_depth()
-        print(f"[{mode.upper()}] Using max_depth: {self.max_depth:.2f} mm")
+        
 
         self.transform = transforms.Compose([
             transforms.ToTensor(),
