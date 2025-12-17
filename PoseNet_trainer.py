@@ -161,13 +161,13 @@ class PoseNetTrainer:
                 best_model_state = copy.deepcopy(self.model.state_dict())
                 early_stop_counter = 0
                 torch.save(self.model.state_dict(), os.path.join(self.save_dir, 'best_posenet_baseline.pth'))
-                print("🚀 New Best Model Saved!")
+                print("----> New Best Model Saved! <----")
             else:
                 early_stop_counter += 1
-                print(f"⚠️ No improvement for {early_stop_counter}/{self.cfg['early_stop_patience']}")
+                print(f"No improvement for {early_stop_counter}/{self.cfg['early_stop_patience']}")
 
             if early_stop_counter >= self.cfg['early_stop_patience']:
-                print("\n⏹️ Early Stopping Triggered!")
+                print("\n Early Stopping Triggered!")
                 break
         
         self.plot_results()
