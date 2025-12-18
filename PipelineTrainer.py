@@ -13,6 +13,8 @@ from utils.Posenet_utils.quaternion_Loss import QuaternionLoss
 from utils.Posenet_utils.utils_geometric import crop_square_resize, image_transformation
 import ultralytics
 import cv2
+import torchvision.transforms as transforms
+import random
 
 class GPUTracker:
     """Helper class to monitor NVIDIA GPU metrics."""
@@ -63,6 +65,13 @@ class PipelineTrainer:
         self.criterion_rot = QuaternionLoss()
         self.yolo = self._setup_yolo()
         
+        # Data augmentation for training only
+        self.rgb_augmentation = transforms.Compose([
+            transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3, hue=0.1),
+            transforms.RandomGrayscale(p=0.1),
+            transforms.GaussianBlur(kernel_size=3, sigma=(0.1, 2.0))
+        ])
+        
         # Metrics
         self.history = {
             'train_loss': [], 'val_loss': [],
@@ -72,10 +81,29 @@ class PipelineTrainer:
             'train_time': [], 'val_time': [],
             'avg_power_w': [], 'throughput': [] # Samples per second
         }
+        
+    def apply_bbox_jitter(self, bbox_center, jitter_range=0.05):
+        """
+        Apply random jitter to bounding box center for training augmentation.
+        
+        Args:
+            bbox_center: Tensor of shape [B, 2] with normalized bbox centers
+            jitter_range: Maximum jitter as fraction of image size (default: 0.05 = 5%)
+        
+        Returns:
+            Jittered bbox_center
+        """
+        jitter = torch.randn_like(bbox_center) * jitter_range
+        jittered_center = bbox_center + jitter
+        # Clamp to valid range [0, 1]
+        jittered_center = torch.clamp(jittered_center, 0.0, 1.0)
+        return jittered_center
+    
     def _setup_yolo(self):
         # Carica il modello YOLOv8 pre-addestrato
         yolo_model = ultralytics.YOLO(self.cfg['yolo_weights']).to(self.device)
         return yolo_model
+        
     def _get_device(self):
         if torch.backends.mps.is_available():
             print("Using Apple MPS acceleration.")
@@ -124,6 +152,12 @@ class PipelineTrainer:
             gt_translation = batch['translation'].to(self.device)
             gt_quaternion = batch['quaternion'].to(self.device)
 
+            # Apply RGB augmentation during training
+            # Note: images are already normalized, so we need to denormalize, augment, then renormalize
+            # For simplicity, we'll apply augmentation in-place with probability
+            if random.random() > 0.2:  # Apply augmentation 80% of the time
+                images = self.rgb_augmentation(images)
+
             RGBD_image = torch.cat((images, depth_images), dim=1)  # Concatenate along channel dimension
 
             power_readings.append(self.gpu_tracker.get_power())
@@ -136,6 +170,9 @@ class PipelineTrainer:
             bx_norm = bx / 640.0 
             by_norm = by / 480.0
             bbox_center = torch.stack([bx_norm, by_norm], dim=1)
+            
+            # Apply random jitter to bbox center during training
+            bbox_center = self.apply_bbox_jitter(bbox_center, jitter_range=0.05)
 
             
             # 1. Translation (DepthNet + Pinhole)
@@ -237,7 +274,7 @@ class PipelineTrainer:
                     bx = predicted_bbox[0]
                     by = predicted_bbox[1] 
                     
-                    # Normalize bbox center
+                    # Normalize bbox center (NO JITTER during validation)
                     bx_norm = bx / 640.0
                     by_norm = by / 480.0
                     bbox_center = torch.stack([bx_norm, by_norm], dim=0).unsqueeze(0)  # [1, 2]
@@ -263,7 +300,7 @@ class PipelineTrainer:
                     img_cropped = crop_square_resize(img, predicted_bbox, self.img_size, is_depth=False)
                     d_img_cropped = crop_square_resize(d_img, predicted_bbox, self.img_size, is_depth=True)
                     
-                    # Convert RGB to tensor and normalize
+                    # Convert RGB to tensor and normalize (NO AUGMENTATION during validation)
                     img_tensor = image_transformation(img_cropped)  # Apply ImageNet normalization
                     img_tensor = img_tensor.unsqueeze(0).to(self.device)  # [1, 3, H, W]
                     
