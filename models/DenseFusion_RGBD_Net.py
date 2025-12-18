@@ -1,3 +1,8 @@
+import torch
+import torch.nn as nn
+import torchvision.models as models 
+from utils.Posenet_utils.attention import GeometricAttention 
+
 class DenseFusion_RGBD_Net(nn.Module):
     def __init__(self, pretrained=True):
         super().__init__()

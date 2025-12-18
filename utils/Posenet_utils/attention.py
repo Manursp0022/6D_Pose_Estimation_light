@@ -1,9 +1,8 @@
 import torch
 import torch.nn as nn
-import torchvision.models as models
 
 class GeometricAttention(nn.Module):
-    
+
     def __init__(self, in_channels):
         super().__init__()
         self.conv_att = nn.Sequential(
