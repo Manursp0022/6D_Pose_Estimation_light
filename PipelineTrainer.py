@@ -32,15 +32,7 @@ class PipelineTrainer:
         self.yolo_to_folder = {
         0: '01', 1: '02', 2: '04', 3: '05', 4: '06', 5: '08',
         6: '09', 7: '10', 8: '11', 9: '12', 10: '13', 11: '14', 12: '15'
-    }
-        
-        """self.DRS = {
-            1: 102.09865663, 2: 247.50624233, 4: 172.49224865,
-            5: 201.40358597, 6: 154.54551808, 8: 261.47178102,
-            9: 108.99920102, 10: 164.62758848, 11: 175.88933422,
-            12: 145.54287471, 13: 278.07811733, 14: 282.60129399,
-            15: 212.35825148
-        }"""
+        }
 
         self.train_loader, self.val_loader = self._setup_data()
         self.module, self.optimizer, self.scheduler = self._setup_model()
@@ -180,7 +172,7 @@ class PipelineTrainer:
                     
                     # Optional: Check if predicted class matches ground truth
                     # If gt_class is available, you can verify correct detection
-                    if gt_class is not None and self.yolo_to_folder[predicted_class] != gt_class[i]:
+                    if gt_class is not None and predicted_class != gt_class[i]:
                         skipped_samples += 1
                         continue
                     
