@@ -21,7 +21,7 @@ class SEBlock(nn.Module):
         return x * y.expand_as(x)
 
 class PoseResNetRGBD(nn.Module):
-    def __init__(self, pretrained=True, intrinsics=None):
+    def __init__(self, pretrained=True, intrinsics=None, dropout=0.5):
         super(PoseResNetRGBD, self).__init__()
         """
         Modello PoseNet che utilizza input RGB-D (4 canali).
@@ -92,15 +92,19 @@ class PoseResNetRGBD(nn.Module):
         
         combined_dim = feature_dim + 64
         
+        self.dropout = nn.Dropout(p=dropout)
+
         self.rotation_head = nn.Sequential(
             nn.Linear(combined_dim, 1024),
             nn.ReLU(inplace=True),
+            nn.Dropout(p=dropout),
             nn.Linear(1024, 4)
         )
         
         self.translation_head = nn.Sequential(
             nn.Linear(combined_dim, 1024),
             nn.ReLU(inplace=True),
+            nn.Dropout(p=dropout),
             nn.Linear(1024, 3)
         )
 
@@ -130,6 +134,8 @@ class PoseResNetRGBD(nn.Module):
         
         # 3. Fusion e Predizione
         combined = torch.cat((x, geom_feat), dim=1)
+
+        combined = self.dropout(combined)
         
         rot = self.rotation_head(combined)
         trans = self.translation_head(combined)
