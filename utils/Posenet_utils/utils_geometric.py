@@ -25,8 +25,7 @@ def image_transformation(img):
                              std=[0.229, 0.224, 0.225])  # Normalizzazione ImageNet
     ])
     
-    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    img_tensor = torch.from_numpy(img).float().permute(2, 0, 1) / 255.0  # [3, H, W], [0, 1]
+    img_tensor = transform(img)  # Applica le trasformazioni
     return img_tensor
 
 

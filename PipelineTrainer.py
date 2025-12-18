@@ -151,30 +151,21 @@ class PipelineTrainer:
             bboxes = batch['bbox'].to(self.device)
             gt_translation = batch['translation'].to(self.device)
             gt_quaternion = batch['quaternion'].to(self.device)
-
-            # Apply RGB augmentation during training
-            # Note: images are already normalized, so we need to denormalize, augment, then renormalize
-            # For simplicity, we'll apply augmentation in-place with probability
-            if random.random() > 0.2:  # Apply augmentation 80% of the time
-                images = self.rgb_augmentation(images)
+            
 
             RGBD_image = torch.cat((images, depth_images), dim=1)  # Concatenate along channel dimension
 
             power_readings.append(self.gpu_tracker.get_power())
             self.optimizer.zero_grad()
 
-            
-            bx = (bboxes[:, 0] + bboxes[:, 2]) / 2.0
-            by = (bboxes[:, 1] + bboxes[:, 3]) / 2.0
+            #bboxes are in [x, y, w, h] format 
+            bx = bboxes[:, 0] 
+            by = bboxes[:, 1]
 
             bx_norm = bx / 640.0 
             by_norm = by / 480.0
             bbox_center = torch.stack([bx_norm, by_norm], dim=1)
-            
-            # Apply random jitter to bbox center during training
-            bbox_center = self.apply_bbox_jitter(bbox_center, jitter_range=0.05)
 
-            
             # 1. Translation (DepthNet + Pinhole)
             r_pred, t_pred = self.module(RGBD_image, bbox_center)  # [B, 1] or [B]
             
@@ -235,40 +226,51 @@ class PipelineTrainer:
                 for i in range(batch_size):
                     # Get YOLO detections for this image
                     detections = yolo_outputs[i].boxes
-                    
+
                     # Check if YOLO detected any objects
                     if len(detections) == 0:
                         skipped_samples += 1
                         continue
-                    
-                    # Get the detection with highest confidence
-                    confidences = detections.conf
-                    best_idx = torch.argmax(confidences)
-                    # YOLO returns class indices (0..N-1). Map them to Linemod folder IDs
-                    # using `self.yolo_to_folder` which maps YOLO class idx -> folder string like '01'.
-                    try:
-                        predicted_class_idx = int(detections.cls[best_idx].item()) if hasattr(detections.cls[best_idx], 'item') else int(detections.cls[best_idx])
-                    except Exception:
-                        predicted_class_idx = int(detections.cls[best_idx])
 
-                    mapped_folder = self.yolo_to_folder.get(predicted_class_idx, None)
-                    if mapped_folder is not None:
-                        predicted_class = int(mapped_folder)
-                    else:
-                        # Fallback: use raw predicted index (best-effort)
-                        predicted_class = predicted_class_idx
-                    predicted_bbox = detections.xywh[best_idx]  # [x1, y1, x2, y2]
-                    
-                    # Optional: Check if predicted class matches ground truth
-                    # If gt_class is available, you can verify correct detection
-                    # Compare mapped YOLO class to ground truth class id (both as ints)
+                    # Require the detection to match the ground-truth class.
+                    # Build list of candidate detection indices whose mapped class == gt_class
+                    gt_c = None
                     if gt_class is not None:
                         gt_c = gt_class[i].item() if hasattr(gt_class[i], 'item') else int(gt_class[i])
-                        if predicted_class != int(gt_c):
-                            skipped_samples += 1
-                            # Debugging info for mismatches
-                            print(f"YOLO class mismatch: pred(mapped)={predicted_class} vs gt={int(gt_c)}; skipping sample")
-                            continue
+
+                    candidates = []
+                    for idx in range(len(detections)):
+                        try:
+                            cls_idx = int(detections.cls[idx].item()) if hasattr(detections.cls[idx], 'item') else int(detections.cls[idx])
+                        except Exception:
+                            cls_idx = int(detections.cls[idx])
+
+                        mapped_folder = self.yolo_to_folder.get(cls_idx, None)
+                        mapped_int = int(mapped_folder) if mapped_folder is not None else cls_idx
+
+                        if gt_c is not None and mapped_int == int(gt_c):
+                            candidates.append(idx)
+
+                    # If no detections match the ground truth class, skip sample
+                    if len(candidates) == 0:
+                        skipped_samples += 1
+                        # Debugging info for mismatches
+                        if gt_c is not None:
+                            print(f"YOLO: no detection matching gt class {int(gt_c)}; skipping sample")
+                        continue
+
+                    # From candidate detections, pick the one with highest confidence
+                    confidences = detections.conf
+                    best_idx = candidates[0]
+                    best_conf = confidences[best_idx]
+                    for c in candidates[1:]:
+                        if confidences[c] > best_conf:
+                            best_idx = c
+                            best_conf = confidences[c]
+
+                    # Use the GT class as predicted_class (we selected matching detection)
+                    
+                    predicted_bbox = detections.xywh[best_idx]
                     
                     # Calculate bbox center from YOLO prediction
                     bx = predicted_bbox[0]
@@ -302,14 +304,10 @@ class PipelineTrainer:
                     
                     # Convert RGB to tensor and normalize (NO AUGMENTATION during validation)
                     img_tensor = image_transformation(img_cropped)  # Apply ImageNet normalization
-                    img_tensor = img_tensor.unsqueeze(0).to(self.device)  # [1, 3, H, W]
+                    img_tensor = img_tensor.unsqueeze(0).to(self.device)  # [3, H, W]
                     
                     # Convert depth to tensor (no normalization)
-                    if len(d_img_cropped.shape) == 2:  # Grayscale depth
-                        depth_tensor = torch.from_numpy(d_img_cropped).float().unsqueeze(0).unsqueeze(0)
-                    else:  # If depth has channels
-                        depth_tensor = torch.from_numpy(d_img_cropped).float().permute(2, 0, 1).unsqueeze(0)
-                    depth_tensor = depth_tensor.to(self.device)  # [1, 1, H, W]
+                    depth_tensor = torch.from_numpy(d_img_cropped).float().unsqueeze(0)
                     
                     # Concatenate RGB and Depth
                     RGBD_image = torch.cat((img_tensor, depth_tensor), dim=1)  # [1, 4, H, W]

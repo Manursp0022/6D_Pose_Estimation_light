@@ -112,42 +112,6 @@ class LineModPoseDataset(Dataset):
             transforms.ToTensor(),
         ])
 
-    """def _compute_max_depth(self, sample_ratio=0.1):
-        
-        Compute max depth (99th percentile) from a sample of the dataset
-        
-        import random
-        
-        # Sample 10% of dataset for speed (min 50 samples)
-        n_samples = max(50, int(len(self.samples) * sample_ratio))
-        sampled = random.sample(self.samples, min(n_samples, len(self.samples)))
-        
-        max_values = []
-        
-        for sample in tqdm(sampled, desc="Sampling depth values"):
-            depth = cv2.imread(sample['depth_path'], cv2.IMREAD_ANYDEPTH)
-            if depth is not None:
-                # Get valid depth values (exclude zeros)
-                valid_depths = depth[depth > 0]
-                if len(valid_depths) > 0:
-                    max_values.append(valid_depths.max())
-        
-        if len(max_values) == 0:
-            print("Warning: No valid depth values found! Using default 2000mm")
-            return 2000.0
-        
-        max_values = np.array(max_values)
-        
-        # Use 99th percentile to avoid outliers
-        p99 = np.percentile(max_values, 99)
-        
-        print(f"  Depth statistics from {len(max_values)} samples:")
-        print(f"    Absolute max: {max_values.max():.2f} mm")
-        print(f"    99th percentile: {p99:.2f} mm")
-        print(f"    Mean: {max_values.mean():.2f} mm")
-        
-        return p99"""
-
     def __len__(self):
         return len(self.samples)
 
@@ -211,17 +175,6 @@ class LineModPoseDataset(Dataset):
             depth_tensor = torch.from_numpy(d_img).float().unsqueeze(0)
             
             final_bbox = torch.tensor(final_bbox, dtype=torch.float32)
-        else:
-            # Validation/Test mode
-            final_bbox = torch.tensor(bbox, dtype=torch.float32)
-            img = cv2.resize(img, (224, 224))
-            d_img = cv2.resize(d_img, (224, 224), interpolation=cv2.INTER_NEAREST)
-            
-            # Transform RGB
-            img_tensor = self.transform(img)
-            
-            # Transform depth to tensor
-            depth_tensor = torch.from_numpy(d_img).float().unsqueeze(0)
 
         quaternion = matrix_to_quaternion(R_matrix)
         
@@ -244,8 +197,7 @@ class LineModPoseDataset(Dataset):
             }
         else:
             return {
-                'image': img_tensor,
-                'depth': depth_tensor,
+                
                 'quaternion': quat_tensor,
                 'translation': trans_tensor,
                 'class_id': target_obj_id,
