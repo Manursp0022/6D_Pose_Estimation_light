@@ -159,8 +159,8 @@ class PipelineTrainer:
             self.optimizer.zero_grad()
 
             #bboxes are in [x, y, w, h] format 
-            bx = bboxes[:, 0] 
-            by = bboxes[:, 1]
+            bx = int(bboxes[:, 0] + bboxes[:, 2] / 2.0)  # center x
+            by = int(bboxes[:, 1] + bboxes[:, 3] / 2.0)  # center y
 
             bx_norm = bx / 640.0 
             by_norm = by / 480.0
@@ -275,7 +275,7 @@ class PipelineTrainer:
                     # Calculate bbox center from YOLO prediction
                     bx = predicted_bbox[0]
                     by = predicted_bbox[1] 
-                    
+                    w, h = predicted_bbox[2], predicted_bbox[3]
                     # Normalize bbox center (NO JITTER during validation)
                     bx_norm = bx / 640.0
                     by_norm = by / 480.0
@@ -298,6 +298,9 @@ class PipelineTrainer:
                         skipped_samples += 1
                         continue
                     
+                    gt_x = bx-(w / 2.0)
+                    gt_y = by-(h / 2.0)
+                    predicted_bbox = [gt_x, gt_y, w, h]
                     # Crop and resize based on YOLO bbox (xywh -> xyxy conversion done above)
                     img_cropped = crop_square_resize(img, predicted_bbox, self.img_size, is_depth=False)
                     d_img_cropped = crop_square_resize(d_img, predicted_bbox, self.img_size, is_depth=True)
