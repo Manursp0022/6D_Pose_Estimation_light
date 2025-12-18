@@ -102,11 +102,6 @@ class LineModPoseDataset(Dataset):
 
         print(f"[{mode.upper()}] Generated {len(self.samples)} samples from {len(image_paths_raw)} images.")
 
-        # Compute max_depth from the dataset
-        print(f"[{mode.upper()}] Computing max depth from dataset...")
-        self.max_depth = self._compute_max_depth()
-        print(f"[{mode.upper()}] Using max_depth: {self.max_depth:.2f} mm")
-
         self.transform = transforms.Compose([
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
@@ -115,42 +110,6 @@ class LineModPoseDataset(Dataset):
         self.d_transform = transforms.Compose([
             transforms.ToTensor(),
         ])
-
-    def _compute_max_depth(self, sample_ratio=0.1):
-        """
-        Compute max depth (99th percentile) from a sample of the dataset
-        """
-        import random
-        
-        # Sample 10% of dataset for speed (min 50 samples)
-        n_samples = max(50, int(len(self.samples) * sample_ratio))
-        sampled = random.sample(self.samples, min(n_samples, len(self.samples)))
-        
-        max_values = []
-        
-        for sample in tqdm(sampled, desc="Sampling depth values"):
-            depth = cv2.imread(sample['depth_path'], cv2.IMREAD_ANYDEPTH)
-            if depth is not None:
-                # Get valid depth values (exclude zeros)
-                valid_depths = depth[depth > 0]
-                if len(valid_depths) > 0:
-                    max_values.append(valid_depths.max())
-        
-        if len(max_values) == 0:
-            print("Warning: No valid depth values found! Using default 2000mm")
-            return 2000.0
-        
-        max_values = np.array(max_values)
-        
-        # Use 99th percentile to avoid outliers
-        p99 = np.percentile(max_values, 99)
-        
-        print(f"  Depth statistics from {len(max_values)} samples:")
-        print(f"    Absolute max: {max_values.max():.2f} mm")
-        print(f"    99th percentile: {p99:.2f} mm")
-        print(f"    Mean: {max_values.mean():.2f} mm")
-        
-        return p99
 
     def __len__(self):
         return len(self.samples)
@@ -167,21 +126,19 @@ class LineModPoseDataset(Dataset):
                 img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
         # Load Depth image
-        d_img = cv2.imread(sample['depth_path'], cv2.IMREAD_ANYDEPTH)
-        if d_img is None:
-            d_img = np.zeros((480, 640), dtype=np.uint16)
+        d_img = cv2.imread(sample['depth_path'], cv2.IMREAD_UNCHANGED)
+        if d_img is None: d_img = np.zeros((480, 640), dtype=np.float32)
+
+        d_img = d_img.astype(np.float32) / 1000.0
         
         bbox = sample['bbox']
         R_matrix = np.array(sample['R']).reshape(3, 3)
         t_vector = np.array(sample['t'])
         target_obj_id = sample['obj_id']
         
-        final_bbox = bbox
-        d_img = d_img.astype(np.float32)
-        d_img = np.clip(d_img, 0, self.max_depth) / self.max_depth
 
         if self.mode == 'train':
-            x, y, w, h = final_bbox
+            x, y, w, h = bbox
             
             center_x = x + w / 2
             center_y = y + h / 2
@@ -205,56 +162,36 @@ class LineModPoseDataset(Dataset):
             # This is the dirty box
             final_bbox = [new_x, new_y, new_w, new_h]
             
-            # Crop both RGB and depth with the same bbox
-            img = crop_square_resize(img, final_bbox, self.img_size, is_depth=False)
-            d_img = crop_square_resize(d_img, final_bbox, self.img_size, is_depth=True)
-            
-            # Transform RGB
-            img_tensor = self.transform(img)
-            
-            # Transform depth to tensor
-            depth_tensor = torch.from_numpy(d_img).float().unsqueeze(0)
-            
-            final_bbox = torch.tensor(final_bbox, dtype=torch.float32)
         else:
-            # Validation/Test mode
-            final_bbox = torch.tensor(bbox, dtype=torch.float32)
-            img = cv2.resize(img, (224, 224))
-            d_img = cv2.resize(d_img, (224, 224), interpolation=cv2.INTER_NEAREST)
+            #it's important to still pass the image(with no jitter), because we have to different validation the one in the training where
+            #we take crop still from GT. The Validation of the Whole system will take crop from the YOLO output , and this image
+            #willò be not conisdered instead what is important is to return the path of the image in order that YOLO can work well.
+            final_bbox = bbox
+        
+        img_crop = crop_square_resize(img, final_bbox, self.img_size, is_depth=False)
+        d_img_crop = crop_square_resize(d_img, final_bbox, self.img_size, is_depth=True)
+
+        bbox_tensor = torch.tensor(final_bbox, dtype=torch.float32)
             
-            # Transform RGB
-            img_tensor = self.transform(img)
-            
-            # Transform depth to tensor
-            depth_tensor = torch.from_numpy(d_img).float().unsqueeze(0)
+        # Transform RGB
+        img_tensor = self.transform(img_crop)
+        # Transform depth to tensor
+        depth_tensor = torch.from_numpy(d_img_crop).float().unsqueeze(0) # [1, 224, 224]
 
         quaternion = matrix_to_quaternion(R_matrix)
-        
         quat_tensor = torch.from_numpy(quaternion).float()
-        trans_tensor = torch.from_numpy(t_vector).float() 
+        trans_tensor = torch.from_numpy(t_vector).float() / 1000.0 # Metri
 
         params = sample['position_input'] 
         cam_params = torch.tensor([params[0], params[1], params[2], params[3]], dtype=torch.float32)
 
-        if self.mode == 'train':
-            return {
-                'image': img_tensor,
-                'depth': depth_tensor,
-                'quaternion': quat_tensor,
-                'translation': trans_tensor,
-                'class_id': target_obj_id,
-                'path': sample['img_path'],
-                'bbox': final_bbox,
-                'cam_params': cam_params
-            }
-        else:
-            return {
-                'image': img_tensor,
-                'depth': depth_tensor,
-                'quaternion': quat_tensor,
-                'translation': trans_tensor,
-                'class_id': target_obj_id,
-                'path': sample['img_path'],
-                'bbox': final_bbox,
-                'cam_params': cam_params
-            }
+        return {
+            'image': img_tensor,
+            'depth': depth_tensor,
+            'quaternion': quat_tensor,
+            'translation': trans_tensor,
+            'class_id': target_obj_id,
+            'path': sample['img_path'],
+            'bbox': bbox_tensor,
+            'cam_params': cam_params
+        }

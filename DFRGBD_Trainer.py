@@ -7,21 +7,11 @@ from tqdm import tqdm
 from torch.utils.data import DataLoader
 
 from utils.Posenet_utils.posenet_dataset_ALL import LineModPoseDataset
-from utils.Posenet_utils.utils_geometric import solve_pinhole_depth
-from models.DepthNet import DepthNet
-from models.Posenet import PoseResNet
+from models.DenseFusion_RGBD_Net import DenseFusion_RGBD_Net
+from utils.Posenet_utils.attention import GeometricAttention
 from utils.Posenet_utils.quaternion_Loss import QuaternionLoss
 
-
-
-"""
-TranslationNet + RotationNet training pipeline.
-- DepthNet predicts depth from depth images.
-- PoseResNet predicts rotation from RGB images.
-- Translation computed via pinhole model using predicted depth and bbox.
-
-"""
-class PipelineTrainer:
+class DenseFusion_RGBD_Trainer:
     def __init__(self, config):
         """
         Inizializza il trainer con un dizionario di configurazione.
@@ -30,17 +20,9 @@ class PipelineTrainer:
         self.device = self._get_device()
         self.save_dir = config['save_dir']
         os.makedirs(self.save_dir, exist_ok=True)
-        
-        self.DRS = {
-            1: 102.09865663, 2: 247.50624233, 4: 172.49224865,
-            5: 201.40358597, 6: 154.54551808, 8: 261.47178102,
-            9: 108.99920102, 10: 164.62758848, 11: 175.88933422,
-            12: 145.54287471, 13: 278.07811733, 14: 282.60129399,
-            15: 212.35825148
-        }
 
         self.train_loader, self.val_loader = self._setup_data()
-        self.d_net, self.r_net, self.d_optimizer, self.r_optimizer, self.d_scheduler, self.r_scheduler = self._setup_model()
+        self.model, self.optimizer, self.scheduler = self._setup_model()
         self.criterion_trans = torch.nn.L1Loss()
         self.criterion_rot = QuaternionLoss()
         
@@ -70,62 +52,38 @@ class PipelineTrainer:
         return train_loader, val_loader
 
     def _setup_model(self):
-        d_net = DepthNet(pretrained=True).to(self.device)
-        d_optimizer = optim.Adam(d_net.parameters(), lr=self.cfg['lr'])
-        d_scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-            d_optimizer, mode='min', factor=0.5, patience=self.cfg['scheduler_patience']
+        model = DenseFusion_RGBD_Net(pretrained=True).to(self.device)
+        optimizer = optim.Adam(model.parameters(), lr=self.cfg['lr'])
+        scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, mode='min', factor=0.5, patience=self.cfg['scheduler_patience']
         )
-        r_net = PoseResNet(pretrained=True).to(self.device)
-        r_optimizer = optim.Adam(r_net.parameters(), lr=self.cfg['lr'])
-        r_scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-            r_optimizer, mode='min', factor=0.5, patience=self.cfg['scheduler_patience']
-        )
-        return d_net, r_net, d_optimizer, r_optimizer, d_scheduler, r_scheduler
+        return model, optimizer, scheduler
 
     def train_epoch(self, epoch):
-        # ❌ WRONG: self.model doesn't exist
-        # ✅ CORRECT: Set both networks to train mode
-        self.d_net.train()
-        self.r_net.train()
-        
+        self.model.train()
         running_loss = 0.0
         progress_bar = tqdm(self.train_loader, desc=f"Epoch {epoch+1}/{self.cfg['epochs']} [Train]")
         
         for batch in progress_bar:
             images = batch['image'].to(self.device)
-            depth_images = batch['depth'].to(self.device)  # ✅ Changed from 'd_image' to 'depth'
+            depths = batch['depth'].to(self.device)
             bboxes = batch['bbox'].to(self.device)
-            intrinsics = batch['cam_params'].to(self.device)
+            #intrinsics = batch['cam_params'].to(self.device)
             gt_translation = batch['translation'].to(self.device)
             gt_quaternion = batch['quaternion'].to(self.device)
             class_ids = batch['class_id']
 
-            # ❌ WRONG: self.optimizer doesn't exist
-            # ✅ CORRECT: Zero gradients for both optimizers
-            self.d_optimizer.zero_grad()
-            self.r_optimizer.zero_grad()
+            self.optimizer.zero_grad()
 
-            # 1. Translation (DepthNet + Pinhole)
-            predicted_depths = self.d_net(depth_images)  # [B, 1] or [B]
-            
-            # Make sure predicted_depths has correct shape
-            if predicted_depths.dim() > 1:
-                predicted_depths = predicted_depths.squeeze(-1)  # [B]
-            
-            pred_translation = solve_pinhole_depth(bboxes, intrinsics, predicted_depths)
-            loss_t = self.criterion_trans(pred_translation, gt_translation)
+            pred_rot, pred_trans = self.model(images,depths)
 
-            # 2. Rotation (ResNet)
-            pred_quats = self.r_net(images)
-            loss_r = self.criterion_rot(pred_quats, gt_quaternion)
+            loss_t = self.criterion_trans(pred_trans, gt_translation)
+            loss_r = self.criterion_rot(pred_rot, gt_quaternion)
 
-            # 3. Total Loss
             total_loss = (self.cfg['alpha'] * loss_t) + (self.cfg['beta'] * loss_r)
 
-            # ✅ Backprop and optimize both networks
             total_loss.backward()
-            self.d_optimizer.step()
-            self.r_optimizer.step()
+            self.optimizer.step()
 
             running_loss += total_loss.item()
             progress_bar.set_postfix({'T_loss': loss_t.item(), 'R_loss': loss_r.item()})
@@ -133,32 +91,23 @@ class PipelineTrainer:
         return running_loss / len(self.train_loader)
 
     def validate(self):
-        # ✅ CORRECT: Set both networks to eval mode
-        self.d_net.eval()
-        self.r_net.eval()
-        
+        self.model.eval()
         running_val_loss = 0.0
         
         with torch.no_grad():
             for batch in tqdm(self.val_loader, desc="Validation"):
                 images = batch['image'].to(self.device)
-                depth_images = batch['depth'].to(self.device)  # ✅ Fixed
+                depths = batch['depth'].to(self.device)
                 bboxes = batch['bbox'].to(self.device)
                 intrinsics = batch['cam_params'].to(self.device)
                 gt_translation = batch['translation'].to(self.device)
-                gt_quats = batch['quaternion'].to(self.device)
+                gt_quaternion = batch['quaternion'].to(self.device)
+                class_ids = batch['class_id']
 
-                # Translation
-                predicted_depths = self.d_net(depth_images)
-                if predicted_depths.dim() > 1:
-                    predicted_depths = predicted_depths.squeeze(-1)
-                    
-                pred_translation = solve_pinhole_depth(bboxes, intrinsics, predicted_depths)
-                loss_t = self.criterion_trans(pred_translation, gt_translation)
+                pred_rot, pred_trans = self.model(images,depths)
 
-                # Rotation
-                pred_quats = self.r_net(images)
-                loss_r = self.criterion_rot(pred_quats, gt_quats)
+                loss_t = self.criterion_trans(pred_trans, gt_translation)
+                loss_r = self.criterion_rot(pred_rot, gt_quaternion )                
 
                 total_loss = (self.cfg['alpha'] * loss_t) + (self.cfg['beta'] * loss_r)
                 running_val_loss += total_loss.item()
@@ -169,8 +118,7 @@ class PipelineTrainer:
         print(f"Starting Training for {self.cfg['epochs']} epochs...")
         best_val_loss = float('inf')
         early_stop_counter = 0
-        best_d_net_state = None
-        best_r_net_state = None
+        best_model_state = None
 
         for epoch in range(self.cfg['epochs']):
             train_loss = self.train_epoch(epoch)
@@ -181,24 +129,21 @@ class PipelineTrainer:
 
             print(f"Epoch {epoch+1}: Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f}")
 
-            self.d_scheduler.step(val_loss)
-            self.r_scheduler.step(val_loss)
-            
+            self.scheduler.step(val_loss)
+
             # Checkpoint & Early Stopping
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
-                best_d_net_state = copy.deepcopy(self.d_net.state_dict())
-                best_r_net_state = copy.deepcopy(self.r_net.state_dict())
+                best_model_state = copy.deepcopy(self.model.state_dict())
                 early_stop_counter = 0
-                torch.save(self.d_net.state_dict(), os.path.join(self.save_dir, 'best_DepthNet_baseline.pth'))
-                torch.save(self.r_net.state_dict(), os.path.join(self.save_dir, 'best_RotationNet_baseline.pth'))
-                print("🚀 New Best Model Saved!")
+                torch.save(self.model.state_dict(), os.path.join(self.save_dir, 'best__DFRGBD.pth'))
+                print("----> New Best Model Saved! <----")
             else:
                 early_stop_counter += 1
-                print(f"⚠️ No improvement for {early_stop_counter}/{self.cfg['early_stop_patience']}")
+                print(f"No improvement for {early_stop_counter}/{self.cfg['early_stop_patience']}")
 
             if early_stop_counter >= self.cfg['early_stop_patience']:
-                print("\n⏹️ Early Stopping Triggered!")
+                print("\n Early Stopping Triggered!")
                 break
         
         self.plot_results()
