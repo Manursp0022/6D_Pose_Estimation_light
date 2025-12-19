@@ -10,7 +10,7 @@ from plyfile import PlyData
 
 # Import dei Modelli
 from models.DenseFusion_RGBD_Net import DenseFusion_RGBD_Net
-from models.RefineNet import PoseRefineNet
+from models.PoseRefine_Net import PoseRefineNet
 from utils.Posenet_utils.posenet_dataset_ALL import LineModPoseDataset
 
 class RefineTrainer:
