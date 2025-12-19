@@ -40,7 +40,7 @@ class RefineTrainer:
         print("Loading Dataset...")
         train_ds = LineModPoseDataset(self.cfg['split_train'], self.cfg['dataset_root'], mode='train')
         # num_workers=0 per Mac
-        return DataLoader(train_ds, batch_size=self.cfg['batch_size'], shuffle=True, num_workers=0)
+        return DataLoader(train_ds, batch_size=self.cfg['batch_size'], shuffle=True, num_workers=2)
     
     def quaternion_to_matrix(self, quaternions):
             """
