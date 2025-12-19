@@ -15,7 +15,7 @@ import ultralytics
 import cv2
 import torchvision.transforms as transforms
 import random
-
+import numpy as np
 class GPUTracker:
     """Helper class to monitor NVIDIA GPU metrics."""
     def __init__(self):
@@ -81,23 +81,6 @@ class PipelineTrainer:
             'train_time': [], 'val_time': [],
             'avg_power_w': [], 'throughput': [] # Samples per second
         }
-        
-    def apply_bbox_jitter(self, bbox_center, jitter_range=0.05):
-        """
-        Apply random jitter to bounding box center for training augmentation.
-        
-        Args:
-            bbox_center: Tensor of shape [B, 2] with normalized bbox centers
-            jitter_range: Maximum jitter as fraction of image size (default: 0.05 = 5%)
-        
-        Returns:
-            Jittered bbox_center
-        """
-        jitter = torch.randn_like(bbox_center) * jitter_range
-        jittered_center = bbox_center + jitter
-        # Clamp to valid range [0, 1]
-        jittered_center = torch.clamp(jittered_center, 0.0, 1.0)
-        return jittered_center
     
     def _setup_yolo(self):
         # Carica il modello YOLOv8 pre-addestrato
@@ -159,8 +142,8 @@ class PipelineTrainer:
             self.optimizer.zero_grad()
 
             #bboxes are in [x, y, w, h] format 
-            bx = int(bboxes[:, 0] + bboxes[:, 2] / 2.0)  # center x
-            by = int(bboxes[:, 1] + bboxes[:, 3] / 2.0)  # center y
+            bx = bboxes[:, 0] + bboxes[:, 2] / 2.0  # center x
+            by = bboxes[:, 1] + bboxes[:, 3] / 2.0 # center y
 
             bx_norm = bx / 640.0 
             by_norm = by / 480.0
@@ -292,11 +275,16 @@ class PipelineTrainer:
 
                     depth_path = path[i].replace('rgb', 'depth')
                     d_img = cv2.imread(depth_path, cv2.IMREAD_UNCHANGED)
+
+                    MAX_DEPTH = 5000.0
+                    d_img = np.clip(d_img, 0.0, 1.0)
                     
                     if d_img is None:
                         print(f"Warning: Could not load depth image for {depth_path[i]}")
                         skipped_samples += 1
                         continue
+                    
+                    d_img = d_img.astype(np.float32) / MAX_DEPTH
                     
                     gt_x = bx-(w / 2.0)
                     gt_y = by-(h / 2.0)
@@ -307,10 +295,10 @@ class PipelineTrainer:
                     
                     # Convert RGB to tensor and normalize (NO AUGMENTATION during validation)
                     img_tensor = image_transformation(img_cropped)  # Apply ImageNet normalization
-                    img_tensor = img_tensor.unsqueeze(0).to(self.device)  # [3, H, W]
+                    img_tensor = img_tensor.unsqueeze(0).to(self.device)  # [1, 3, H, W]
                     
                     # Convert depth to tensor (no normalization)
-                    depth_tensor = torch.from_numpy(d_img_cropped).float().unsqueeze(0)
+                    depth_tensor = torch.from_numpy(d_img_cropped).float().unsqueeze(0).unsqueeze(0).to(self.device)  # [1, 1, H, W]
                     
                     # Concatenate RGB and Depth
                     RGBD_image = torch.cat((img_tensor, depth_tensor), dim=1)  # [1, 4, H, W]

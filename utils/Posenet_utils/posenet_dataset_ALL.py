@@ -130,6 +130,9 @@ class LineModPoseDataset(Dataset):
         d_img = cv2.imread(sample['depth_path'], cv2.IMREAD_ANYDEPTH)
         if d_img is None:
             d_img = np.zeros((480, 640), dtype=np.uint16)
+        MAX_DEPTH = 5000.0
+        d_img = d_img.astype(np.float32) / MAX_DEPTH
+        d_img = np.clip(d_img, 0.0, 1.0)
         
         bbox = sample['bbox']
         R_matrix = np.array(sample['R']).reshape(3, 3)
@@ -137,7 +140,6 @@ class LineModPoseDataset(Dataset):
         target_obj_id = sample['obj_id']
         
         final_bbox = bbox
-        d_img = d_img.astype(np.float32)
 
         if self.mode == 'train':
             x, y, w, h = final_bbox

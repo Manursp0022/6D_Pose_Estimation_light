@@ -15,7 +15,7 @@ import ultralytics
 import cv2
 import torchvision.transforms as transforms
 import random
-
+import numpy as np
 
 if __name__ == "__main__":
     dataset_root= 'C:\\Users\\gabri\\Desktop\\AML project\\6D_Pose_Estimation_light\\dataset\\Linemod_preprocessed'
