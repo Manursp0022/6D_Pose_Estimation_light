@@ -127,56 +127,54 @@ class RefineTrainer:
 
             # A. Stima Iniziale (Frozen)
             with torch.no_grad():
-                # Qui usiamo il nuovo metodo forward_refine!
+                # Chiamiamo forward_refine per avere anche le feature (emb_global)
                 pred_r_quat, pred_t, emb_global = self.model_main.forward_refine(images, depth) 
                 # emb_global shape: [B, 512]
             
             # B. Preparazione Input Geometrico per Refiner
-            # Dobbiamo creare la nuvola di punti trasformata con la posa PREDETTA
             cloud_input_list = []
+            
+            # Matrici di rotazione dal quaternione predetto
+            R_pred_batch = self.quaternion_to_matrix(pred_r_quat) # [B, 3, 3]
             
             for k in range(bs):
                 oid = int(class_ids[k])
                 if oid not in self.models_3d:
-                    # Fallback (non dovrebbe succedere)
+                    # Fallback (dummy points) se manca il modello
                     dummy = torch.zeros((self.cfg['num_points_mesh'], 3), device=self.device)
                     cloud_input_list.append(dummy)
                     continue
                 
-                # Prendi punti modello base
                 raw_pts = self.models_3d[oid] # [N, 3]
                 
-                # Trasforma con Predizione Iniziale (che contiene errore)
-                # Conversione Quat -> Matrix (Semplificata per il loop)
-                # (Idealmente usa una funzione batch, qui facciamo loop per chiarezza)
-                R_pred = self.quaternion_to_matrix(pred_r_quat[k]) # [3, 3]
-                t_pred = pred_t[k] # [3]
+                # Trasformazione: R * Pti + t
+                # R_pred_batch[k] è [3,3], raw_pts è [N,3] -> (R @ P.T).T + t
+                R_curr = R_pred_batch[k] # [3, 3]
+                t_curr = pred_t[k]       # [3]
                 
-                # Applica: R*x + t
-                transformed_pts = torch.mm(raw_pts, R_pred.T) + t_pred # [N, 3]
+                transformed_pts = torch.mm(raw_pts, R_curr.T) + t_curr
                 cloud_input_list.append(transformed_pts)
             
-            # Stack -> [B, N, 3] -> Permute [B, 3, N] per Conv1d
-            cloud_input = torch.stack(cloud_input_list).permute(0, 2, 1) # [B, 3, N]
+            # Stack e Permute per Conv1d: [B, N, 3] -> [B, 3, N]
+            cloud_input = torch.stack(cloud_input_list).permute(0, 2, 1)
             
             # C. Refiner Forward
-            # Input: Punti trasformati "male" + Embedding visivo
-            # Output: Delta R, Delta T
+            # Input: Nuvola "sbagliata" + Feature visive
+            # Output: Correzioni (Delta)
             delta_r, delta_t = self.refiner(cloud_input, emb_global)
             
-            # D. Calcolo Loss (Semplificata: Supervised su quanto deve correggere)
-            # La "vera" correzione necessaria è (GT - Pred)
-            # Qui approssimiamo allenando la posa finale raffinata vs GT
-            
-            # Applica Delta alla predizione (Approssimazione lineare per training stabile)
+            # D. Calcolo Loss
+            # Applichiamo il delta alla predizione
             refined_t = pred_t + delta_t
-            refined_r = pred_r_quat + delta_r # Somma brutale quaternioni (funziona per piccoli delta)
+            # Somma quaternioni approssimata (funziona per piccoli delta di refinement)
+            refined_r = pred_r_quat + delta_r 
             refined_r = torch.nn.functional.normalize(refined_r, p=2, dim=1)
             
             loss_t = self.criterion_L1(refined_t, gt_t)
             loss_r = self.criterion_L1(refined_r, gt_r_quat)
             
-            loss = loss_t + loss_r
+            # Bilanciamo un po': la rotazione è più difficile
+            loss = loss_t + (loss_r * 1.0)
             
             # E. Backprop
             self.optimizer.zero_grad()
@@ -185,17 +183,27 @@ class RefineTrainer:
             
             total_loss += loss.item()
             steps += 1
-            pbar.set_postfix({'Loss': total_loss/steps})
+            pbar.set_postfix({'L': total_loss/steps, 'Lt': loss_t.item(), 'Lr': loss_r.item()})
 
-        print(f"Epoch {epoch_idx+1} finished. Avg Loss: {total_loss/steps:.4f}")
+        avg_loss = total_loss / steps if steps > 0 else 0
+        print(f"Epoch {epoch_idx+1} finished. Avg Loss: {avg_loss:.5f}")
+        return avg_loss
 
     def run(self):
         print("Starting Training Loop...")
+        best_loss = float('inf')
+        
         for epoch in range(self.cfg['epochs']):
-            self.train_epoch(epoch)
+            epoch_loss = self.train_epoch(epoch)
             
-            # Salva checkpoint ogni 5 epoche
+            # --- LOGICA SAVE BEST ---
+            if epoch_loss < best_loss:
+                best_loss = epoch_loss
+                path = os.path.join(self.cfg['save_dir'], "best_refiner.pth")
+                torch.save(self.refiner.state_dict(), path)
+                print(f" >>> New Best Model Saved! Loss: {best_loss:.5f}")
+            
+            # Salva checkpoint periodico (backup)
             if (epoch+1) % 5 == 0:
                 path = os.path.join(self.cfg['save_dir'], f"refiner_ep{epoch+1}.pth")
                 torch.save(self.refiner.state_dict(), path)
-                print(f"Saved checkpoint: {path}")
