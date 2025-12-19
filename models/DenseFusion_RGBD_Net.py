@@ -87,3 +87,32 @@ class DenseFusion_RGBD_Net(nn.Module):
         
         return pred_rot, pred_trans
         #pred_conf
+
+    def forward_refine(self, rgb, depth):
+        #Feature Extraction
+        rgb_feat = self.rgb_extractor(rgb)       # [B, 512, 7, 7]
+        
+        depth_3ch = torch.cat([depth, depth, depth], dim=1)
+        depth_feat = self.depth_extractor(depth_3ch) # [B, 512, 7, 7]
+        
+        # Depth “tells” RGB where to look, we produce an attention map
+        att_map = self.attention_block(depth_feat) 
+        rgb_enhanced = rgb_feat * att_map 
+        
+        # Concatenazione and Fusion
+        combined_feat = torch.cat([rgb_enhanced, depth_feat], dim=1) # [B, 1024, 7, 7]
+        
+        fused_feat = self.fusion_net(combined_feat) # [B, 512, 7, 7]
+        
+        #Pooling & Heads
+        vector_feat = self.global_pool(fused_feat) 
+        vector_feat = torch.flatten(vector_feat, 1) # [B, 512]
+        
+        pred_rot = self.rot_head(vector_feat)
+        pred_rot = torch.nn.functional.normalize(pred_rot, p=2, dim=1)
+        
+        pred_trans = self.trans_head(vector_feat)
+        #pred_conf = self.conf_head(vector_feat)
+        
+        return pred_rot, pred_trans, vector_feat
+        #pred_conf
