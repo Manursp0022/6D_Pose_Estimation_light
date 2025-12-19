@@ -111,7 +111,7 @@ class PipelineTrainer:
 
     def _setup_model(self):
         module = PoseResNetRGBD(pretrained=True).to(self.device)
-        optimizer = optim.Adam(module.parameters(), lr=self.cfg['lr'], weight_decay=1e-6)
+        optimizer = optim.Adam(module.parameters(), lr=self.cfg['lr'], weight_decay=self.cfg.get('weight_decay', 1e-4))
         scheduler = optim.lr_scheduler.ReduceLROnPlateau(
             optimizer, mode='min', factor=0.5, patience=self.cfg['scheduler_patience']
         )
@@ -283,7 +283,7 @@ class PipelineTrainer:
                         print(f"Warning: Could not load depth image for {depth_path[i]}")
                         skipped_samples += 1
                         continue
-                    
+
                     d_img = d_img.astype(np.float32) / MAX_DEPTH
                     
                     gt_x = bx-(w / 2.0)
@@ -507,7 +507,8 @@ class PipelineTrainer:
         plot_path = os.path.join(self.save_dir, "training_metrics_complete.png")
         plt.savefig(plot_path, dpi=300, bbox_inches='tight')
         print(f"✅ Complete metrics plot saved to: {plot_path}")
-        plt.show()
+        plt.close()
+        #plt.show()
 
 
 if __name__ == "__main__":
