@@ -15,7 +15,7 @@ from utils.Posenet_utils.DenseFusion_Loss import DenseFusionLoss
 
 class DFMdAtt_Trainer:
     def __init__(self, config):
-        self.cfg = config
+      self.cfg = config
         
         # Setup Device
         if torch.cuda.is_available():
@@ -24,7 +24,7 @@ class DFMdAtt_Trainer:
             print(">>> Using CUDA (NVIDIA)")
         elif torch.backends.mps.is_available():
             self.device = torch.device("mps")
-            self.num_workers = 0 # MPS non ama multiprocessing pesante
+            self.num_workers = 0 
             print(">>> Using MPS (Apple Silicon)")
         else:
             self.device = torch.device("cpu")
@@ -33,35 +33,46 @@ class DFMdAtt_Trainer:
 
         os.makedirs(self.cfg['save_dir'], exist_ok=True)
 
-        # A. Setup Modello Turbo
+        # A. Setup Modello
         print("Initializing DenseFusion TURBO Net...")
         self.model = DenseFusion_Masked_DualAtt_Net(
             pretrained=True, 
-            temperature=self.cfg.get('temperature', 2.0) # Temperatura Confidence
+            temperature=self.cfg.get('temperature', 2.0)
         ).to(self.device)
         
         # B. Setup Loss & Dati 3D
         self.criterion = DenseFusionLoss(self.device)
-        self.models_tensor = self._load_3d_models_tensor() # Carica geometria per la Loss
+        self.models_tensor = self._load_3d_models_tensor()
 
-        # C. Setup Dataset
-        self.train_loader = self._setup_data()
+        # C. Setup Dataset (Train & Val)
+        self.train_loader, self.val_loader = self._setup_data()
         
-        # D. Optimizer
+        # D. Optimizer & Scheduler
         self.optimizer = optim.Adam(self.model.parameters(), lr=self.cfg['lr'])
-        self.history = {'train_loss': []}
+        
+        # Riduce LR se la Val Loss non scende per 'patience' epoche
+        self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+            self.optimizer, mode='min', factor=0.5, patience=self.cfg['scheduler_patience'], verbose=True
+        )
+        
+        self.history = {'train_loss': [], 'val_loss': []}
 
     def _setup_data(self):
-        print("Loading Dataset...")
+        print("Loading Datasets...")
         train_ds = LineModPoseDataset(self.cfg['split_train'], self.cfg['dataset_root'], mode='train')
-        return DataLoader(train_ds, batch_size=self.cfg['batch_size'], shuffle=True, num_workers=self.num_workers)
+        val_ds = LineModPoseDataset(self.cfg['split_val'], self.cfg['dataset_root'], mode='val')
+        
+        train_loader = DataLoader(train_ds, batch_size=self.cfg['batch_size'], shuffle=True, num_workers=self.num_workers)
+        val_loader = DataLoader(val_ds, batch_size=self.cfg['batch_size'], shuffle=False, num_workers=self.num_workers)
+        
+        print(f"Data Loaded: {len(train_ds)} Train samples, {len(val_ds)} Val samples.")
+        return train_loader, val_loader
 
     def _load_3d_models_tensor(self):
-        print("Loading 3D Models (Vertices) into VRAM for Loss Calculation...")
+        print("Loading 3D Models into VRAM...")
         models_dir = os.path.join(self.cfg['dataset_root'], 'models')
         max_id = 16 
         num_pts = self.cfg['num_points_mesh']
-        # Tensore unico [16, 500, 3]
         all_models = torch.zeros((max_id, num_pts, 3), dtype=torch.float32)
         
         obj_ids = [1, 2, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15]
@@ -82,79 +93,113 @@ class DFMdAtt_Trainer:
         running_loss = 0.0
         steps = 0
         
-        pbar = tqdm(self.train_loader, desc=f"Ep {epoch+1}")
+        pbar = tqdm(self.train_loader, desc=f"Ep {epoch+1} [Train]")
         
         for batch in pbar:
-            # Inputs
             images = batch['image'].to(self.device)
             depths = batch['depth'].to(self.device)
-            masks  = batch['mask'].to(self.device) # <--- La Maschera!
+            masks  = batch['mask'].to(self.device)
             
-            # GT Labels
-            gt_translation = batch['translation'].to(self.device)
-            gt_quaternion = batch['quaternion'].to(self.device)
+            gt_t = batch['translation'].to(self.device)
+            gt_q = batch['quaternion'].to(self.device)
             class_ids = batch['class_id'].to(self.device)
 
             self.optimizer.zero_grad()
 
-            # --- FORWARD PASS (Con Diagnostica) ---
-            pred_rot, pred_trans, debug_stats = self.model(
-                images, depths, mask=masks, return_debug=True
-            )
+            # Forward (No Debug info)
+            pred_rot, pred_trans = self.model(images, depths, mask=masks, return_debug=False)
 
-            # --- LOSS CALCULATION (SOTA ADD) ---
-            # Recupera i punti dell'oggetto corretto dal tensore precaricato
             current_model_points = self.models_tensor[class_ids.long()] 
-            
-            loss = self.criterion(pred_rot, pred_trans, gt_quaternion, gt_translation, current_model_points, class_ids)
+            loss = self.criterion(pred_rot, pred_trans, gt_q, gt_t, current_model_points, class_ids)
 
             loss.backward()
             self.optimizer.step()
 
             running_loss += loss.item()
             steps += 1
-            
-            # Update barra (mostra la loss in cm/metri)
-            pbar.set_postfix({'ADD Loss': f"{loss.item():.4f}"})
-
-            # --- STAMPA INTELLIGENTE DI DIAGNOSTICA ---
-            if steps % 50 == 0:
-                tqdm.write(f"\n --- DIAGNOSTICA BATCH {steps} (Ep {epoch+1}) ---")
-                
-                # Attenzione (Geometrica)
-                att_msg = (f" [Attention] Mean: {debug_stats['att_mean']:.3f} | "
-                           f"Max: {debug_stats['att_max']:.3f} | "
-                           f"Min: {debug_stats['att_min']:.3f}")
-                tqdm.write(att_msg)
-                
-                # Confidence (Pesi Pixel)
-                conf_msg = (f" [Confidence] Max Peak: {debug_stats['conf_max']:.4f} (Ideal: >0.1) | "
-                            f"Std: {debug_stats['conf_std']:.4f}")
-                tqdm.write(conf_msg)
-                
-                # Warning Temperature
-                if debug_stats['conf_max'] > 0.95:
-                    tqdm.write(" [WARNING] Confidence Peak ~1.0. La rete si fida di UN solo pixel. Alza la Temperature!")
-                if debug_stats['conf_max'] < 0.025:
-                    tqdm.write(" [INFO] Confidence piatta (Inizio training).")
-                
-                tqdm.write(" ---------------------------------")
+            pbar.set_postfix({'Loss': f"{loss.item():.4f}"})
 
         return running_loss / steps
 
+    def validate(self):
+        self.model.eval()
+        running_loss = 0.0
+        steps = 0
+        
+        # Nessun gradiente in validazione
+        with torch.no_grad():
+            for batch in tqdm(self.val_loader, desc="[Val]"):
+                images = batch['image'].to(self.device)
+                depths = batch['depth'].to(self.device)
+                masks  = batch['mask'].to(self.device)
+                
+                gt_t = batch['translation'].to(self.device)
+                gt_q = batch['quaternion'].to(self.device)
+                class_ids = batch['class_id'].to(self.device)
+
+                pred_rot, pred_trans = self.model(images, depths, mask=masks, return_debug=False)
+
+                current_model_points = self.models_tensor[class_ids.long()]
+                loss = self.criterion(pred_rot, pred_trans, gt_q, gt_t, current_model_points, class_ids)
+
+                running_loss += loss.item()
+                steps += 1
+        
+        return running_loss / steps
+
     def run(self):
-        print(f"Starting TURBO Training ({self.cfg['epochs']} epochs)...")
-        best_loss = float('inf')
+        print(f"Starting FINAL Training ({self.cfg['epochs']} epochs)...")
+        
+        best_val_loss = float('inf')
+        early_stop_counter = 0
+        patience_limit = self.cfg.get['early_stop_patience']
         
         for epoch in range(self.cfg['epochs']):
+            # 1. Train
             train_loss = self.train_epoch(epoch)
-            self.history['train_loss'].append(train_loss)
             
-            print(f"Epoch {epoch+1} Completed. Mean ADD Loss: {train_loss:.4f}")
+            # 2. Validate
+            val_loss = self.validate()
+            
+            # 3. Scheduler Step
+            # (Il ReduceLROnPlateau guarda la val_loss per decidere)
+            self.scheduler.step(val_loss)
+            
+            # Store history
+            self.history['train_loss'].append(train_loss)
+            self.history['val_loss'].append(val_loss)
+            
+            print(f"Epoch {epoch+1} | Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f}")
 
-            # Salviamo sempre il best model
-            if train_loss < best_loss:
-                best_loss = train_loss
+            # 4. Checkpoint & Early Stopping
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                early_stop_counter = 0
                 path = os.path.join(self.cfg['save_dir'], 'best_turbo_model.pth')
                 torch.save(self.model.state_dict(), path)
-                print(f"----> New Best Model Saved! Loss: {best_loss:.5f} <----")
+                print(f" >>> New Best Model Saved! Val Loss: {best_val_loss:.5f} <<<")
+            else:
+                early_stop_counter += 1
+                print(f" No improvement. Early Stop Counter: {early_stop_counter}/{patience_limit}")
+                
+            if early_stop_counter >= patience_limit:
+                print("\n!!! Early Stopping Triggered !!!")
+                break
+        
+        print("Training Finished.")
+        self.plot_results()
+
+    def plot_results(self):
+        plt.figure(figsize=(10, 6))
+        plt.plot(self.history['train_loss'], label='Train ADD Loss', color='blue')
+        plt.plot(self.history['val_loss'], label='Val ADD Loss', color='orange')
+        plt.title('Training Progress (ADD Metric)')
+        plt.xlabel('Epochs')
+        plt.ylabel('ADD Loss (avg meters)')
+        plt.legend()
+        plt.grid(True, which='both', linestyle='--', linewidth=0.5)
+        
+        path = os.path.join(self.cfg['save_dir'], 'loss_curve.png')
+        plt.savefig(path)
+        print(f"Plot saved to {path}")
+        plt.show()

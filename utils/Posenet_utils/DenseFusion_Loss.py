@@ -5,8 +5,7 @@ class DenseFusionLoss(nn.Module):
     def __init__(self, device):
         super().__init__()
         self.device = device
-        # IDs oggetti simmetrici in Linemod (Eggbox=10, Glue=11)
-        self.sym_list = [10, 11] 
+        self.sym_list = [10, 11] # Eggbox, Glue
 
     def quaternion_to_matrix(self, quaternions):
         r, i, j, k = torch.unbind(quaternions, -1)
@@ -27,23 +26,18 @@ class DenseFusionLoss(nn.Module):
         gt_R_mat = self.quaternion_to_matrix(gt_r)
 
         # Trasforma punti modello: (R * P) + t
-        # model_points: [B, N, 3] -> [B, 3, N] per moltiplicazione matriciale
         pred_pts = torch.bmm(pred_R_mat, model_points.permute(0, 2, 1)) + pred_t.unsqueeze(2) 
         gt_pts = torch.bmm(gt_R_mat, model_points.permute(0, 2, 1)) + gt_t.unsqueeze(2)       
         
-        # Riportiamo a [B, N, 3] per calcolo distanze
         pred_pts = pred_pts.permute(0, 2, 1)
         gt_pts = gt_pts.permute(0, 2, 1)
 
         for i in range(bs):
             idx = int(obj_ids[i])
-            # CASO SIMMETRICO (ADD-S)
             if idx in self.sym_list:
-                # Distanza nearest neighbor
-                dist_matrix = torch.cdist(pred_pts[i].unsqueeze(0), gt_pts[i].unsqueeze(0)) # [1, N, N]
+                dist_matrix = torch.cdist(pred_pts[i].unsqueeze(0), gt_pts[i].unsqueeze(0))
                 min_dist, _ = torch.min(dist_matrix, dim=2) 
                 loss_i = torch.mean(min_dist)
-            # CASO ASIMMETRICO (ADD)
             else:
                 diff = pred_pts[i] - gt_pts[i]
                 dis = torch.norm(diff, dim=1)
