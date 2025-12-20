@@ -15,7 +15,7 @@ from utils.Posenet_utils.DenseFusion_Loss import DenseFusionLoss
 
 class DFMdAtt_Trainer:
     def __init__(self, config):
-      self.cfg = config
+        self.cfg = config
         
         # Setup Device
         if torch.cuda.is_available():
