@@ -52,7 +52,7 @@ class DFMdAtt_Trainer:
         
         # Riduce LR se la Val Loss non scende per 'patience' epoche
         self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-            self.optimizer, mode='min', factor=0.5, patience=self.cfg['scheduler_patience'], verbose=True
+            self.optimizer, mode='min', factor=0.5, patience=self.cfg['scheduler_patience']
         )
         
         self.history = {'train_loss': [], 'val_loss': []}
