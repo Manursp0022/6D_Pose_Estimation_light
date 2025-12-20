@@ -5,6 +5,7 @@ class GeometricAttention(nn.Module):
 
     def __init__(self, in_channels):
         super().__init__()
+        #spatial Attention
         self.conv_att = nn.Sequential(
             nn.Conv2d(in_channels, in_channels // 2, kernel_size=3, padding=1),
             nn.BatchNorm2d(in_channels // 2),

@@ -14,101 +14,110 @@ from models.PoseRefine_Net import PoseRefineNet
 from utils.Posenet_utils.posenet_dataset_ALL import LineModPoseDataset
 
 class RefineTrainer:
-    def __init__(self,config):
-        # --- CONFIGURAZIONE ---
+    def __init__(self, config):
         self.cfg = config
         
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        # Setup Device
+        if torch.cuda.is_available():
+            self.device = torch.device("cuda")
+            self.num_workers = 8
+        elif torch.backends.mps.is_available():
+            self.device = torch.device("mps")
+            self.num_workers = 2
+        else:
+            self.device = torch.device("cpu")
+            self.num_workers = 0
+            
         print(f"Initializing RefineTrainer on: {self.device}")
         
         os.makedirs(self.cfg['save_dir'], exist_ok=True)
         
-        # 1. SETUP DATI
-        self.train_loader = self._setup_data()
-        self.models_3d = self._load_3d_models()
-        
-        # 2. SETUP MODELLI
         self.model_main = self._setup_main_model()
         self.refiner = self._setup_refiner()
         
-        # 3. OPTIMIZER & LOSS
+        self.models_tensor = self._load_3d_models_tensor()
+        
+        self.train_loader = self._setup_data()
+
         self.optimizer = optim.Adam(self.refiner.parameters(), lr=self.cfg['lr'])
-        self.criterion_L1 = nn.L1Loss() # Per semplicità usiamo L1 su delta
-    
+        self.criterion_t = nn.L1Loss() 
 
     def _setup_data(self):
         print("Loading Dataset...")
         train_ds = LineModPoseDataset(self.cfg['split_train'], self.cfg['dataset_root'], mode='train')
-        # num_workers=0 per Mac
-        return DataLoader(train_ds, batch_size=self.cfg['batch_size'], shuffle=True, num_workers=2)
-    
+        return DataLoader(train_ds, batch_size=self.cfg['batch_size'], shuffle=True, num_workers=self.num_workers, pin_memory=True)
+
     def quaternion_to_matrix(self, quaternions):
-            """
-            Versione PyTorch nativa: Mantiene i gradienti e lavora su GPU.
-            """
-            # Scompattiamo w, x, y, z (o x, y, z, w a seconda dell'ordine)
-            # Assumiamo ordine standard [x, y, z, w] se usi scipy come riferimento, 
-            # MA PyTorch DenseFusion di solito esce [w, x, y, z] o [x, y, z, w].
-            # Controlliamo l'ordine: Solitamente DenseFusion outputta quaternioni normalizzati.
-            
-            # Qui assumiamo output [w, x, y, z] (Parte reale prima). 
-            # Se i tuoi risultati sono strani, prova a cambiare l'ordine in r, i, j, k = ...
-            r, i, j, k = torch.unbind(quaternions, -1)
-            two_s = 2.0 / (quaternions * quaternions).sum(-1)
+        r, i, j, k = torch.unbind(quaternions, -1)
+        two_s = 2.0 / (quaternions * quaternions).sum(-1)
+        o = torch.stack(
+            (
+                1 - two_s * (j * j + k * k), two_s * (i * j - k * r), two_s * (i * k + j * r),
+                two_s * (i * j + k * r), 1 - two_s * (i * i + k * k), two_s * (j * k - i * r),
+                two_s * (i * k - j * r), two_s * (j * k + i * r), 1 - two_s * (i * i + j * j),
+            ), -1)
+        return o.reshape(quaternions.shape[:-1] + (3, 3))
 
-            o = torch.stack(
-                (
-                    1 - two_s * (j * j + k * k),
-                    two_s * (i * j - k * r),
-                    two_s * (i * k + j * r),
-                    two_s * (i * j + k * r),
-                    1 - two_s * (i * i + k * k),
-                    two_s * (j * k - i * r),
-                    two_s * (i * k - j * r),
-                    two_s * (j * k + i * r),
-                    1 - two_s * (i * i + j * j),
-                ),
-                -1,
-            )
-            return o.reshape(quaternions.shape[:-1] + (3, 3))
-
-    def _load_3d_models(self):
-        print("Loading 3D Models (PLY) for Geometry...")
-        models_3d = {}
+    def _load_3d_models_tensor(self):
+        print("Loading 3D Models into GPU Tensor...")
         models_dir = os.path.join(self.cfg['dataset_root'], 'models')
-        # Mapping ID (i tuoi ID dataset)
-        obj_ids = [1, 2, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15]
+        max_id = 16 
+        num_pts = self.cfg['num_points_mesh']
+        all_models = torch.zeros((max_id, num_pts, 3), dtype=torch.float32)
         
+        obj_ids = [1, 2, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15]
         for obj_id in obj_ids:
             path = os.path.join(models_dir, f"obj_{obj_id:02d}.ply")
             if os.path.exists(path):
                 ply = PlyData.read(path)
                 v = ply['vertex']
-                pts = np.stack([v['x'], v['y'], v['z']], axis=-1) / 1000.0 # Metri
-                
-                # Sottocampionamento casuale (per velocità)
-                if pts.shape[0] > self.cfg['num_points_mesh']:
-                    idx = np.random.choice(pts.shape[0], self.cfg['num_points_mesh'], replace=False)
+                pts = np.stack([v['x'], v['y'], v['z']], axis=-1) / 1000.0
+                if pts.shape[0] > num_pts:
+                    idx = np.random.choice(pts.shape[0], num_pts, replace=False)
                     pts = pts[idx, :]
-                
-                models_3d[obj_id] = torch.from_numpy(pts).float().to(self.device)
-        return models_3d
+                all_models[obj_id] = torch.from_numpy(pts).float()
+        return all_models.to(self.device)
 
     def _setup_main_model(self):
         print("Loading Frozen Main Model...")
         model = DenseFusion_RGBD_Net(pretrained=False).to(self.device)
         model.load_state_dict(torch.load(self.cfg['main_weights'], map_location=self.device))
         model.eval()
-        # CONGELA TUTTO
         for param in model.parameters():
             param.requires_grad = False
         return model
 
     def _setup_refiner(self):
         print("Initializing RefineNet...")
-        # Nota: Input channels = 512 (feature) + 3 (xyz)
         refiner = PoseRefineNet(num_points=self.cfg['num_points_mesh']).to(self.device)
         return refiner
+
+# --- LA RIVOLUZIONE: POINT MATCHING LOSS ---
+    def criterion_add(self, pred_r, pred_t, gt_r, gt_t, model_points):
+        """
+        Calcola la distanza media tra i punti del modello trasformati con la posa predetta
+        e quelli trasformati con la posa vera.
+        Accoppia R e T in un'unica metrica fisica.
+        """
+        pred_R_mat = self.quaternion_to_matrix(pred_r) # [B, 3, 3]
+        gt_R_mat = self.quaternion_to_matrix(gt_r)     # [B, 3, 3]
+        
+        # Trasforma nuvola PREDETTA: (R_pred * P) + t_pred
+        # model_points: [B, N, 3] -> permute [B, 3, N]
+        pred_pts = torch.bmm(pred_R_mat, model_points.permute(0, 2, 1)) + pred_t.unsqueeze(2) # [B, 3, N]
+        
+        # Trasforma nuvola VERA: (R_gt * P) + t_gt
+        gt_pts = torch.bmm(gt_R_mat, model_points.permute(0, 2, 1)) + gt_t.unsqueeze(2)       # [B, 3, N]
+        
+        # Distanza Euclidea tra ogni punto corrispondente
+        # distance: [B, 3, N]
+        diff = pred_pts - gt_pts
+        dis = torch.norm(diff, dim=1) # [B, N] (Norma L2 su xyz)
+        
+        # Loss Media su tutti i punti e su tutto il batch
+        loss = torch.mean(dis)
+
+        return loss
 
     def train_epoch(self, epoch_idx):
         self.refiner.train()
@@ -116,94 +125,63 @@ class RefineTrainer:
         steps = 0
         
         pbar = tqdm(self.train_loader, desc=f"Ep {epoch_idx+1}")
+        
         for batch in pbar:
-            images = batch['image'].to(self.device)
-            depth = batch['depth'].to(self.device)
-            gt_t = batch['translation'].to(self.device) # [B, 3]
-            gt_r_quat = batch['quaternion'].to(self.device) # [B, 4]
-            class_ids = batch['class_id']
+            images = batch['image'].to(self.device, non_blocking=True)
+            depth = batch['depth'].to(self.device, non_blocking=True)
+            gt_t = batch['translation'].to(self.device, non_blocking=True)
+            gt_r_quat = batch['quaternion'].to(self.device, non_blocking=True)
+            class_ids = batch['class_id'].to(self.device)
             
-            bs = images.size(0)
-
-            # A. Stima Iniziale (Frozen)
+            # A. Stima Iniziale
             with torch.no_grad():
-                # Chiamiamo forward_refine per avere anche le feature (emb_global)
                 pred_r_quat, pred_t, emb_global = self.model_main.forward_refine(images, depth) 
-                # emb_global shape: [B, 512]
             
-            # B. Preparazione Input Geometrico per Refiner
-            cloud_input_list = []
+            # B. Input Refiner
+            model_points = self.models_tensor[class_ids.long()] # [B, 500, 3]
             
-            # Matrici di rotazione dal quaternione predetto
-            R_pred_batch = self.quaternion_to_matrix(pred_r_quat) # [B, 3, 3]
-            
-            for k in range(bs):
-                oid = int(class_ids[k])
-                if oid not in self.models_3d:
-                    # Fallback (dummy points) se manca il modello
-                    dummy = torch.zeros((self.cfg['num_points_mesh'], 3), device=self.device)
-                    cloud_input_list.append(dummy)
-                    continue
-                
-                raw_pts = self.models_3d[oid] # [N, 3]
-                
-                # Trasformazione: R * Pti + t
-                # R_pred_batch[k] è [3,3], raw_pts è [N,3] -> (R @ P.T).T + t
-                R_curr = R_pred_batch[k] # [3, 3]
-                t_curr = pred_t[k]       # [3]
-                
-                transformed_pts = torch.mm(raw_pts, R_curr.T) + t_curr
-                cloud_input_list.append(transformed_pts)
-            
-            # Stack e Permute per Conv1d: [B, N, 3] -> [B, 3, N]
-            cloud_input = torch.stack(cloud_input_list).permute(0, 2, 1)
+            R_pred = self.quaternion_to_matrix(pred_r_quat)
+            rotated_pts = torch.bmm(R_pred, model_points.permute(0, 2, 1)) 
+            cloud_input = rotated_pts + pred_t.unsqueeze(2) 
             
             # C. Refiner Forward
-            # Input: Nuvola "sbagliata" + Feature visive
-            # Output: Correzioni (Delta)
             delta_r, delta_t = self.refiner(cloud_input, emb_global)
             
-            # D. Calcolo Loss
-            # Applichiamo il delta alla predizione
+            # D. Applicazione Delta
             refined_t = pred_t + delta_t
-            # Somma quaternioni approssimata (funziona per piccoli delta di refinement)
             refined_r = pred_r_quat + delta_r 
             refined_r = torch.nn.functional.normalize(refined_r, p=2, dim=1)
             
-            loss_t = self.criterion_L1(refined_t, gt_t)
-            loss_r = self.criterion_L1(refined_r, gt_r_quat)
+            # E. LOSS ADD (Point Matching)
+            # Qui la magia: Se sposti la T male, i punti si allontanano -> Loss sale.
+            # Se ruoti male la R, i punti si allontanano -> Loss sale.
+            loss = self.criterion_add(refined_r, refined_t, gt_r_quat, gt_t, model_points)
             
-            # Bilanciamo un po': la rotazione è più difficile
-            loss = loss_t + (loss_r * 1.0)
-            
-            # E. Backprop
             self.optimizer.zero_grad()
             loss.backward()
             self.optimizer.step()
             
             total_loss += loss.item()
             steps += 1
-            pbar.set_postfix({'L': total_loss/steps, 'Lt': loss_t.item(), 'Lr': loss_r.item()})
+            # Stampiamo la loss in cm (più leggibile)
+            pbar.set_postfix({'ADD Loss (m)': f"{total_loss/steps:.4f}"})
 
         avg_loss = total_loss / steps if steps > 0 else 0
-        print(f"Epoch {epoch_idx+1} finished. Avg Loss: {avg_loss:.5f}")
         return avg_loss
 
     def run(self):
-        print("Starting Training Loop...")
+        print("Starting Training Loop (ADD LOSS)...")
         best_loss = float('inf')
         
         for epoch in range(self.cfg['epochs']):
             epoch_loss = self.train_epoch(epoch)
             
-            # --- LOGICA SAVE BEST ---
             if epoch_loss < best_loss:
                 best_loss = epoch_loss
                 path = os.path.join(self.cfg['save_dir'], "best_refiner.pth")
                 torch.save(self.refiner.state_dict(), path)
-                print(f" >>> New Best Model Saved! Loss: {best_loss:.5f}")
+                print(f" >>> New Best Model Saved! ADD Loss: {best_loss:.5f}")
             
-            # Salva checkpoint periodico (backup)
             if (epoch+1) % 5 == 0:
                 path = os.path.join(self.cfg['save_dir'], f"refiner_ep{epoch+1}.pth")
                 torch.save(self.refiner.state_dict(), path)

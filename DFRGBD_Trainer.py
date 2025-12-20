@@ -8,7 +8,6 @@ from torch.utils.data import DataLoader
 
 from utils.Posenet_utils.posenet_dataset_ALL import LineModPoseDataset
 from models.DenseFusion_RGBD_Net import DenseFusion_RGBD_Net
-from utils.Posenet_utils.attention import GeometricAttention
 from utils.Posenet_utils.quaternion_Loss import QuaternionLoss
 
 class DenseFusion_RGBD_Trainer:
