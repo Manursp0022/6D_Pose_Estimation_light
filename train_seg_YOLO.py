@@ -13,7 +13,8 @@ class yolo_seg_trainer:
             epochs=10,
             patience=30,
             batch=16,
-            ):
+            freeze_layers = 5 #about half the backbone
+        ):
         self.dataset_root = dataset_root
         self.train_split = train_split
         self.val_split = val_split
@@ -21,6 +22,7 @@ class yolo_seg_trainer:
         self.epochs = epochs
         self.patience = patience
         self.batch = batch
+        self.freeze_layers = freeze_layers
 
     def train(self):
         #dataset_root = "C:\Users\gabri\Desktop\AML_project\6D_Pose_Estimation_light\dataset\Linemod_preprocessed" if args["dataset_root"] is None else args["dataset_root"]
@@ -48,5 +50,6 @@ class yolo_seg_trainer:
             pretrained=True,
             optimizer='auto',
             verbose=True,
+            freeze=self.freeze_layers,
         )
 
