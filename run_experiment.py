@@ -1,14 +1,35 @@
 #from DFRGBD_Evaluate import DF_RGBD_Net_Evaluator
 #from Refiner_Evaluate import RefinedEvaluator
 import os
-from Refine_Trainer import RefineTrainer
-from Refiner_Evaluate import RefinedEvaluator
-from DFMdAtt_Trainer import DFMdAtt_Trainer
-from evaluate_with_ICP import ICPEvaluator
-import os
+from Refinement_Section.evaluate_with_ICP_Nogt import ICPEvaluator
 import re
-
+import torch
 if __name__ == "__main__":
+    # Configurazione
+    torch.set_num_threads(1)
+    config = {
+        'dataset_root': "/Users/emanuelerosapepe/Desktop/test_YOLO/Linemod_preprocessed",
+        'split_val': "data/autosplit_val_ALL.txt",
+        'save_dir': "checkpoints/", 
+        'temperature': 2.0
+    }
+    
+    # Fix Mac issue
+    os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+    
+    evaluator = ICPEvaluator(config)
+    evaluator.evaluate()
+    """
+    config = {
+        'dataset_root': "/Users/emanuelerosapepe/Desktop/test_YOLO/Linemod_preprocessed",
+        'split_val': "data/autosplit_val_ALL.txt",
+        'save_dir': "checkpoints/", 
+    }
+    evaluator = ZoomLoopEvaluator(config)
+    evaluator.run(iterations=2)
+    """
+
+    """
 
     config = {
         'dataset_root': "/Users/emanuelerosapepe/Desktop/test_YOLO/Linemod_preprocessed",
@@ -22,22 +43,8 @@ if __name__ == "__main__":
     
     trainer = RefineTrainerDelta(config)
     trainer.train()
-
-
     """
 
-    # Configurazione
-    config = {
-        'dataset_root': "/Users/emanuelerosapepe/Desktop/test_YOLO/Linemod_preprocessed",
-        'split_val': "data/autosplit_val_ALL.txt",
-        'save_dir': "checkpoints/", # Dove sta il best_turbo_model_A100.pth
-        'temperature': 2.0
-    }
-    
-    # Instanzia ed esegui
-    evaluator = ICPEvaluator(config)
-    evaluator.evaluate()
-    """
     """
     # CONFIGURAZIONE RAPIDA
     config = {
