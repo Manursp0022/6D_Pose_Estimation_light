@@ -4,10 +4,24 @@ import os
 from Refine_Trainer import RefineTrainer
 from Refiner_Evaluate import RefinedEvaluator
 from DFMdAtt_Trainer import DFMdAtt_Trainer
+from evaluate_with_ICP import ICPEvaluator
 import os
 import re
 
 if __name__ == "__main__":
+
+    # Configurazione
+    config = {
+        'dataset_root': "/Users/emanuelerosapepe/Desktop/test_YOLO/Linemod_preprocessed",
+        'split_val': "data/autosplit_val_ALL.txt",
+        'save_dir': "checkpoints/", # Dove sta il best_turbo_model_A100.pth
+        'temperature': 2.0
+    }
+    
+    # Instanzia ed esegui
+    evaluator = ICPEvaluator(config)
+    evaluator.evaluate()
+    """
     # CONFIGURAZIONE RAPIDA
     config = {
         'dataset_root': "/Users/emanuelerosapepe/Desktop/test_YOLO/Linemod_preprocessed",
@@ -25,7 +39,7 @@ if __name__ == "__main__":
 
     trainer = DFMdAtt_Trainer(config)
     trainer.run()
-
+    """
     """
     config = {
         'dataset_root': "/Users/emanuelerosapepe/Desktop/test_YOLO/Linemod_preprocessed",
