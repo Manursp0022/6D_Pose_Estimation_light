@@ -152,7 +152,7 @@ class DFMdAtt_Trainer:
         
         best_val_loss = float('inf')
         early_stop_counter = 0
-        patience_limit = self.cfg.get['early_stop_patience']
+        patience_limit = self.cfg['early_stop_patience']
         
         for epoch in range(self.cfg['epochs']):
             # 1. Train
