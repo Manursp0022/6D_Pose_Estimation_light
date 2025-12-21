@@ -10,6 +10,22 @@ import re
 
 if __name__ == "__main__":
 
+    config = {
+        'dataset_root': "/Users/emanuelerosapepe/Desktop/test_YOLO/Linemod_preprocessed",
+        'split_train': "data/autosplit_val_ALL.txt",
+        'save_dir': "checkpoints/",
+        'main_weights': "checkpoints//best_turbo_model_A100.pth", # Baseline weights
+        'batch_size': 128, 
+        'lr': 0.0001,
+        'epochs': 30,     
+    }
+    
+    trainer = RefineTrainerDelta(config)
+    trainer.train()
+
+
+    """
+
     # Configurazione
     config = {
         'dataset_root': "/Users/emanuelerosapepe/Desktop/test_YOLO/Linemod_preprocessed",
@@ -21,6 +37,7 @@ if __name__ == "__main__":
     # Instanzia ed esegui
     evaluator = ICPEvaluator(config)
     evaluator.evaluate()
+    """
     """
     # CONFIGURAZIONE RAPIDA
     config = {
