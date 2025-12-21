@@ -12,10 +12,13 @@ if __name__ == "__main__":
     config = {
         'dataset_root': "/Users/emanuelerosapepe/Desktop/test_YOLO/Linemod_preprocessed",
         'split_train': "data/autosplit_train_ALL.txt",
+        'split_val': "data/autosplit_val_ALL.txt",
         'save_dir': "checkpoints_turbo/",
         'batch_size': 32,
         'lr': 0.0001,
         'epochs': 10,           # Train corto per debug
+        'early_stop_patience': 20,
+        'scheduler_patience': 10,
         'num_points_mesh': 500, # Per la Loss
         'temperature': 2.0      # Parametro Confidence (prova 1.0, 2.0, 5.0)
     }
