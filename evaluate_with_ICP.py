@@ -38,9 +38,21 @@ class ICPEvaluator:
             raise FileNotFoundError(f"Checkpoint non trovato: {ckpt_path}")
             
         print(f"Loading Checkpoint: {ckpt_path}")
-        self.model.load_state_dict(torch.load(ckpt_path, map_location=self.device))
+        
+        # --- NUOVO CODICE CORRETTO ---
+        state_dict = torch.load(ckpt_path, map_location=self.device)
+        
+        # Dizionario pulito per rimuovere il prefisso "_orig_mod." Dato dal train con torch.compile
+        new_state_dict = {}
+        for k, v in state_dict.items():
+            # Rimuove "_orig_mod." se presente all'inizio della chiave
+            name = k.replace("_orig_mod.", "")
+            new_state_dict[name] = v
+            
+        self.model.load_state_dict(new_state_dict)
+        # -----------------------------
+        
         self.model.eval()
-
         # 2. CARICAMENTO DATASET DI VALIDAZIONE
         val_ds = LineModPoseDataset(self.cfg['split_val'], self.cfg['dataset_root'], mode='val')
         # Batch size 1 è obbligatorio per ICP (processiamo una nuvola alla volta)

@@ -10,10 +10,11 @@ from tqdm import tqdm
 
 
 class LineModPoseDataset(Dataset):
-    def __init__(self, split_file, dataset_root, mode='train', img_size=224):
+    def __init__(self, split_file, dataset_root, mode='train', img_size=224, noise_factor=0.05):
         self.dataset_root = dataset_root
         self.mode = mode
         self.img_size = img_size
+        self.noise_factor = noise_factor
         self.samples = [] #The flat list of ALL possible crops
         
         #split file is ...train_ALL.txt or ...val_ALL.txt
@@ -148,8 +149,8 @@ class LineModPoseDataset(Dataset):
             center_x = x + w / 2
             center_y = y + h / 2
 
-            noise_x = np.random.uniform(-0.05, 0.05) * w
-            noise_y = np.random.uniform(-0.05, 0.05) * h
+            noise_x = np.random.uniform(-self.noise_factor, self.noise_factor) * w
+            noise_y = np.random.uniform(-self.noise_factor, self.noise_factor) * h
 
             scale = np.random.uniform(0.95, 1.05)
 
