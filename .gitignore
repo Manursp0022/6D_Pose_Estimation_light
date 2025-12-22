@@ -197,4 +197,4 @@ wandb/
 .DS_Store
 
 checkpoints/*.pth
-
+run_experiment.py

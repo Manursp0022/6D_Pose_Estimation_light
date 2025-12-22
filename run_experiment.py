@@ -6,19 +6,18 @@ import re
 import torch
 if __name__ == "__main__":
     # Configurazione
-    torch.set_num_threads(1)
     config = {
-        'dataset_root': "/Users/emanuelerosapepe/Desktop/test_YOLO/Linemod_preprocessed",
-        'split_val': "data/autosplit_val_ALL.txt",
-        'save_dir': "checkpoints/", 
-        'temperature': 2.0
+        'dataset_root': "/content/dataset/Linemod_preprocessed",
+        'split_train': "/content/6D_Pose_Estimation_light/data/autosplit_train_ALL.txt",
+        'save_dir': "checkpoints/",
+        'main_weights': "checkpoints/best_turbo_model_A100.pth", # Assicurati che esista!
+        'batch_size': 32, # 32 è sicuro, 64 se hai VRAM
+        'lr': 0.0001,
+        'epochs': 20
     }
     
-    # Fix Mac issue
-    os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
-    
-    evaluator = ICPEvaluator(config)
-    evaluator.evaluate()
+    trainer = IterativeRefineTrainer(config)
+    trainer.train()
     """
     config = {
         'dataset_root': "/Users/emanuelerosapepe/Desktop/test_YOLO/Linemod_preprocessed",
