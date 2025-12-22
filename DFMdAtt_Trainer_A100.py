@@ -13,6 +13,7 @@ from plyfile import PlyData
 from utils.Posenet_utils.posenet_dataset_ALL import LineModPoseDataset
 from models.DFMasked_DualAtt_Net import DenseFusion_Masked_DualAtt_Net 
 from utils.Posenet_utils.DenseFusion_Loss import DenseFusionLoss
+from models.DFMasked_DualAtt_Net34 import DenseFusion_Masked_DualAtt_Net34
 
 class DFTurboTrainerA100:
     def __init__(self, config):
@@ -23,8 +24,8 @@ class DFTurboTrainerA100:
             self.device = torch.device("cuda")
             # A100 su Colab ha solitamente 12 vCPU. Usiamole tutte.
             self.num_workers = 12 
-            # Benchmark trova l'algoritmo di convoluzione più veloce per la tua dimensione input
-            torch.backends.cudnn.benchmark = True 
+            torch.set_float32_matmul_precision('high') 
+            torch.backends.cudnn.benchmark = True
             print(f">>> A100 DETECTED. Using {torch.cuda.get_device_name(0)}")
             print(f">>> Num Workers set to {self.num_workers}")
         else:
@@ -39,9 +40,9 @@ class DFTurboTrainerA100:
 
         # A. Setup Modello
         print("Initializing DenseFusion TURBO Net (A100 Optimized)...")
-        self.model = DenseFusion_Masked_DualAtt_Net(
+        self.model = DenseFusion_Masked_DualAtt_Net34(
             pretrained=True, 
-            temperature=self.cfg.get('temperature', 2.0)
+            temperature=self.cfg['temperature']
         ).to(self.device)
         
         # --- 3. TORCH COMPILE (PyTorch 2.0+) ---
@@ -61,8 +62,11 @@ class DFTurboTrainerA100:
         
         # D. Optimizer & Scheduler
         self.optimizer = optim.Adam(self.model.parameters(), lr=self.cfg['lr'])
-        self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-            self.optimizer, mode='min', factor=0.5, patience=self.cfg['scheduler_patience'], verbose=True
+        self.scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
+            self.optimizer, 
+            T_0=10, 
+            T_mult=2, 
+            eta_min=1e-6
         )
         
         self.history = {'train_loss': [], 'val_loss': []}
@@ -184,8 +188,9 @@ class DFTurboTrainerA100:
         for epoch in range(self.cfg['epochs']):
             train_loss = self.train_epoch(epoch)
             val_loss = self.validate()
-            self.scheduler.step(val_loss)
-            
+            #self.scheduler.step(val_loss)
+
+            self.scheduler.step()
             self.history['train_loss'].append(train_loss)
             self.history['val_loss'].append(val_loss)
             
@@ -194,7 +199,7 @@ class DFTurboTrainerA100:
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
                 early_stop_counter = 0
-                path = os.path.join(self.cfg['save_dir'], 'best_turbo_model_A100.pth')
+                path = os.path.join(self.cfg['save_dir'], 'best_DF_MaskedNet34_model_A100.pth')
                 torch.save(self.model.state_dict(), path)
                 print(f" >>> New Best Model Saved! Val Loss: {best_val_loss:.5f} <<<")
             else:
@@ -219,3 +224,24 @@ class DFTurboTrainerA100:
         path = os.path.join(self.cfg['save_dir'], 'loss_curve.png')
         plt.savefig(path)
         plt.show()
+
+"""
+# Nel file DFTurboTrainerA100.py, sostituisci la definizione dello scheduler:
+
+# --- VECCHIO ---
+# self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(...)
+
+# --- NUOVO (Migliore convergenza) ---
+# T_0=10: Resetta il LR ogni 10 epoche. T_mult=2: Poi ogni 20, poi ogni 40.
+self.scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
+    self.optimizer, 
+    T_0=10, 
+    T_mult=2, 
+    eta_min=1e-6
+)
+
+# NOTA: CosineAnnealing va chiamato a OGNI batch o a OGNI epoca.
+# Se WarmRestarts, meglio a ogni epoch.
+# Nel loop di train, cambia: self.scheduler.step(val_loss) -> self.scheduler.step()
+# E togli l'argomento val_loss perché Cosine non guarda la loss.
+"""

@@ -3,7 +3,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.models as models 
 from utils.Posenet_utils.attention import GeometricAttention 
-from models.Feature_refiner import FeatureRefiner
 
 class DenseFusion_Masked_DualAtt_Net(nn.Module):
     def __init__(self, pretrained=True, temperature=1.0):
@@ -62,9 +61,8 @@ class DenseFusion_Masked_DualAtt_Net(nn.Module):
             nn.Conv2d(128, 1, 1) 
         )
 
-        self.refiner = FeatureRefiner(in_channels=512)
-
     def _forward_fusion(self, rgb, depth, mask=None, return_debug=False):
+        """Helper function condivisa tra forward e refine"""
         # MASKING
         if mask is not None:
             rgb = rgb * mask
@@ -89,9 +87,17 @@ class DenseFusion_Masked_DualAtt_Net(nn.Module):
         x_res = self.fusion_res(x)
         fused_feat = F.relu(x + x_res) # Residual add & final ReLU
         
-        return fused_feat
+        debug_info = {}
+        if return_debug:
+            # Calcolo statistiche solo se richiesto
+            debug_info['att_mean'] = att_map.mean().item()
+            debug_info['att_max']  = att_map.max().item()
+            debug_info['att_min']  = att_map.min().item()
+            debug_info['att_std']  = att_map.std().item()
+        
+        return fused_feat, debug_info
 
-    def _weighted_pooling(self, fused_feat, batch_size):
+    def _weighted_pooling(self, fused_feat, batch_size, return_debug=False, debug_info=None):
         """Logica di pooling intelligente condivisa"""
         pred_rot_map = self.rot_head(fused_feat)     # [B, 4, 7, 7]
         pred_trans_map = self.trans_head(fused_feat) # [B, 3, 7, 7]
@@ -118,33 +124,28 @@ class DenseFusion_Masked_DualAtt_Net(nn.Module):
         
         # Global Feature Vector (Weighted)
         fused_flat = fused_feat.view(batch_size, 512, -1)
+        vector_feat_global = torch.sum(fused_flat * weights, dim=2) # [B, 512]
+        
+        if return_debug and debug_info is not None:
+            debug_info['conf_max'] = weights.max().item()
+            debug_info['conf_mean'] = weights.mean().item()
+            debug_info['conf_std'] = weights.std().item()
 
-        return pred_rot_global, pred_trans_global, fused_flat
+        return pred_rot_global, pred_trans_global, vector_feat_global, debug_info
 
-    def forward(self, rgb, depth, mask=None, return_debug=False,refine_iters=2):
+    def forward(self, rgb, depth, mask=None, return_debug=False):
         bs = rgb.size(0)
         # Passiamo return_debug agli helper
-        fused_feat = self._forward_fusion(rgb, depth, mask, return_debug)
-        pred_r, pred_t, dense_feat  = self._weighted_pooling(fused_feat, bs)
-
-        # 2. REFINEMENT LOOP (Opzionale)
-        if refine_iters > 0:
-            final_r = pred_r.clone()
-            final_t = pred_t.clone()
-            
-            # Detach delle feature per risparmiare memoria durante il loop (come RNN)
-            # Se vuoi backprop alla CNN, togli .detach() (ma consuma molta VRAM)
-            refine_feat = dense_feat.detach() 
-            
-            for _ in range(refine_iters):
-                # Il Refiner predice il Delta guardando Feature + Posa Attuale
-                delta_r, delta_t = self.refiner(refine_feat, final_r, final_t)
-                
-                # Update Posa
-                final_t = final_t + delta_t
-                final_r = final_r + delta_r
-                final_r = F.normalize(final_r, p=2, dim=1)
-                
-            return final_r, final_t
-            
+        fused_feat, dbg = self._forward_fusion(rgb, depth, mask, return_debug)
+        pred_r, pred_t, _, dbg_final = self._weighted_pooling(fused_feat, bs, return_debug, dbg)
+        
+        if return_debug:
+            return pred_r, pred_t, dbg_final
         return pred_r, pred_t
+
+    def forward_refine(self, rgb, depth, mask=None):
+        # Per il refiner non ci serve il debug solitamente, usiamo False
+        bs = rgb.size(0)
+        fused_feat, _ = self._forward_fusion(rgb, depth, mask, return_debug=False)
+        pred_r, pred_t, vector_feat, _ = self._weighted_pooling(fused_feat, bs, return_debug=False, debug_info=None)
+        return pred_r, pred_t, vector_feat

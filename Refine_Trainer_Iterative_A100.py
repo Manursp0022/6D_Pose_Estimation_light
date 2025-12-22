@@ -5,6 +5,7 @@ import time
 from tqdm import tqdm
 from torch.utils.data import DataLoader
 import numpy as np
+from plyfile import PlyData 
 
 from models.DFMasked_DualAtt_Net import DenseFusion_Masked_DualAtt_Net 
 from utils.Posenet_utils.posenet_dataset_ALL import LineModPoseDataset
@@ -17,27 +18,22 @@ class IterativeRefineTrainer:
         # --- 1. SETUP HARDWARE A100 ---
         if torch.cuda.is_available():
             self.device = torch.device("cuda")
-            
-            # [A100 MAGIC] Abilita TensorFloat-32 (TF32)
-            # Aumenta drasticamente la velocità delle matmul mantenendo precisione
             torch.set_float32_matmul_precision('high') 
-            
-            # Ottimizzazione kernel CUDNN
             torch.backends.cudnn.benchmark = True 
-            
             print(f">>> A100 DETECTED: {torch.cuda.get_device_name(0)}")
         else:
             self.device = torch.device("cpu")
-            print("WARNING: Training on CPU is not recommended.")
         
         print(f">>> Initializing Iterative Feature Refiner...")
         self.model = DenseFusion_Masked_DualAtt_Net(pretrained=False).to(self.device)
         
+        # --- 2. LOAD 3D MODELS (FIX PRESTAZIONI) ---
+        # Carichiamo ORA, una volta sola, in VRAM. Non nel loop!
+        self.models_tensor = self._load_3d_models_tensor().to(self.device)
+
         if torch.cuda.is_available():
             try:
                 print("Compiling model with torch.compile()...")
-                # 'reduce-overhead' è ottimo per loop veloci, ma usa più memoria all'avvio
-                # Se ti da OutOfMemory, togli mode='reduce-overhead'
                 self.model = torch.compile(self.model, mode='reduce-overhead')
             except Exception as e:
                 print(f"Compile warning (skipping): {e}")
@@ -46,15 +42,12 @@ class IterativeRefineTrainer:
         if os.path.exists(self.cfg['main_weights']):
             print(f"Loading Baseline Weights: {self.cfg['main_weights']}")
             state = torch.load(self.cfg['main_weights'], map_location=self.device)
-            # Pulizia nomi chiavi per compatibilità
             clean_state = {k.replace('_orig_mod.', ''): v for k, v in state.items()}
-            # Strict=False per ignorare i pesi mancanti del Refiner
             self.model.load_state_dict(clean_state, strict=False)
         else:
             raise FileNotFoundError(f"Baseline weights not found at {self.cfg['main_weights']}")
         
         # --- 4. FREEZE PARZIALE ---
-        # Congeliamo la Baseline, alleniamo solo il Refiner
         for name, param in self.model.named_parameters():
             if 'refiner' not in name:
                 param.requires_grad = False
@@ -65,7 +58,6 @@ class IterativeRefineTrainer:
         print(f"Trainable Parameters (Refiner): {trainable_params}")
 
         # --- 5. FUSED ADAM ---
-        # L'argomento 'fused=True' sposta la logica dell'optimizer sulla GPU
         self.optimizer = optim.Adam(
             self.model.refiner.parameters(), 
             lr=self.cfg.get('lr', 0.0001), 
@@ -82,21 +74,49 @@ class IterativeRefineTrainer:
             mode='train'
         )
         
-        # Dataloader ottimizzato per throughput elevato
         self.train_loader = DataLoader(
             self.train_ds, 
             batch_size=self.cfg['batch_size'], 
             shuffle=True, 
-            num_workers=12,         # Su Colab A100 usa 12 (max vCPU)
-            pin_memory=True,        # Velocizza .to(device)
-            persistent_workers=True,# Mantiene i processi vivi tra le epoche
-            prefetch_factor=4,      # Precarica 4 batch per worker
-            drop_last=True          # Evita batch piccoli finali che sballano le statistiche
+            num_workers=12,         
+            pin_memory=True,        
+            persistent_workers=True,
+            prefetch_factor=4,      
+            drop_last=True          
         )
 
+    def _load_3d_models_tensor(self):
+        print("Loading 3D Models into VRAM...")
+        models_dir = os.path.join(self.cfg['dataset_root'], 'models')
+        max_id = 16 
+        # Usa il valore dalla config o default a 500
+        num_pts = self.cfg.get('num_points_mesh', 500) 
+        all_models = torch.zeros((max_id, num_pts, 3), dtype=torch.float32)
+        
+        obj_ids = [1, 2, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15]
+        for obj_id in obj_ids:
+            path = os.path.join(models_dir, f"obj_{obj_id:02d}.ply")
+            if os.path.exists(path):
+                ply = PlyData.read(path)
+                v = ply['vertex']
+                pts = np.stack([v['x'], v['y'], v['z']], axis=-1) 
+                
+                # Check unità di misura (mm -> m)
+                if np.mean(np.abs(pts)) > 10.0:
+                    pts = pts / 1000.0
+                    
+                # Sampling
+                if pts.shape[0] > num_pts:
+                    idx = np.random.choice(pts.shape[0], num_pts, replace=False)
+                    pts = pts[idx, :]
+                all_models[obj_id] = torch.from_numpy(pts).float()
+            else:
+                print(f"[WARN] Mesh not found: {path}")
+        return all_models # Restituisce CPU tensor, poi .to(device) in init
+
     def train(self):
-        self.model.eval() # Baseline in Eval
-        self.model.refiner.train() # Refiner in Train
+        self.model.eval() 
+        self.model.refiner.train()
         
         best_loss = float('inf')
         save_path = os.path.join(self.cfg['save_dir'], "best_iterative_refiner.pth")
@@ -110,41 +130,36 @@ class IterativeRefineTrainer:
             steps = 0
             
             for batch in loop:
-                # --- A. CARICAMENTO ASINCRONO ---
                 img = batch['image'].to(self.device, non_blocking=True)
                 depth = batch['depth'].to(self.device, non_blocking=True)
                 mask = batch['mask'].to(self.device, non_blocking=True)
                 gt_r = batch['quaternion'].to(self.device, non_blocking=True)
                 gt_t = batch['translation'].to(self.device, non_blocking=True)
-                points = batch['points'].to(self.device, non_blocking=True) 
                 obj_ids = batch['class_id'].to(self.device, non_blocking=True)
                 
-                # 'set_to_none=True' è leggermente più veloce di 'zero_grad()'
+                # --- FIX CRITICO ---
+                # Peschiamo i punti corretti dalla memoria GPU usando gli ID del batch
+                # Shape risultante: [Batch_Size, 500, 3]
+                points = self.models_tensor[obj_ids.long()]
+                
                 self.optimizer.zero_grad(set_to_none=True)
                 
-                # --- B. BFLOAT16 (Specifico per A100) ---
-                # A100 supporta bfloat16 che ha lo stesso range di float32.
-                # Non serve GradScaler! È più stabile di float16.
                 with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                    # refine_iters=3: La rete prova a correggersi 3 volte
                     pred_r, pred_t = self.model(img, depth, mask, refine_iters=3)
                     loss = self.criterion(pred_r, pred_t, gt_r, gt_t, points, obj_ids)
                 
-                # Backward diretta (senza scaler)
                 loss.backward()
                 self.optimizer.step()
                 
                 ep_loss += loss.item()
                 steps += 1
                 
-                # Aggiorniamo la barra meno spesso per guadagnare qualche ms
                 if steps % 10 == 0:
                     loop.set_postfix(loss=f"{loss.item():.4f}")
             
             avg_loss = ep_loss / steps
             print(f"Epoch {epoch+1} Avg Loss: {avg_loss:.5f}")
             
-            # Salvataggio intelligente
             if avg_loss < best_loss:
                 print(f" >>> 💾 New Best Model! ({best_loss:.4f} -> {avg_loss:.4f})")
                 best_loss = avg_loss
