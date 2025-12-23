@@ -37,6 +37,18 @@ class DAMFTurboTrainerA100:
             pretrained=True, 
             temperature=self.cfg.get('temperature', 1.0)
         ).to(self.device)
+
+        if 'resume_from' in self.cfg and self.cfg['resume_from'] is not None:
+            print(f"🔄 FINE-TUNING MODE: Loading weights from {self.cfg['resume_from']}")
+            if os.path.exists(self.cfg['resume_from']):
+                checkpoint = torch.load(self.cfg['resume_from'], map_location=self.device)
+                
+                # Carichiamo solo i pesi del modello
+                # (Ignoriamo optimizer e epoch perché stiamo iniziando un nuovo stage con LR diverso)
+                self.model.load_state_dict(checkpoint['model_state_dict'])
+                print("✅ Weights loaded successfully!")
+            else:
+                raise FileNotFoundError(f"Checkpoint not found at {self.cfg['resume_from']}")
         
         try:
             print("Compiling model with torch.compile()...")
