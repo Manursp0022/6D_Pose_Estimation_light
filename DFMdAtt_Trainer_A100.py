@@ -138,7 +138,7 @@ class DFTurboTrainerA100:
             # --- 5. AUTOMATIC MIXED PRECISION (AMP) ---
             # Esegue il forward pass in float16 dove possibile
             with torch.autocast(device_type='cuda', dtype=torch.float16):
-                pred_rot, pred_trans = self.model(images, depths, mask=masks, return_debug=False)
+                pred_rot, pred_trans = self.model(images, depths, mask=masks)
                 
                 current_model_points = self.models_tensor[class_ids.long()] 
                 loss = self.criterion(pred_rot, pred_trans, gt_q, gt_t, current_model_points, class_ids)

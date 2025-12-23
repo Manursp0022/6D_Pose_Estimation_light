@@ -14,15 +14,16 @@ class DenseFusion_Masked_DualAtt_Net34(nn.Module):
         # --- 1. UPGRADE BACKBONES: ResNet34 + DILATION ---
         # ResNet34 ha più capacità della 18.
         # replace_stride_with_dilation=[False, False, True] mantiene la risoluzione finale a 14x14 invece di 7x7
-        self.rgb_backbone = models.resnet34(
+# --- 1. RESNET-50 (Necessaria per la Dilation) ---
+        self.rgb_backbone = models.resnet50(
             weights='DEFAULT' if pretrained else None,
-            replace_stride_with_dilation=[False, False, True] 
+            replace_stride_with_dilation=[False, False, True] # Output 14x14
         )
-        self.depth_backbone = models.resnet34(
+        self.depth_backbone = models.resnet50(
             weights='DEFAULT' if pretrained else None,
             replace_stride_with_dilation=[False, False, True]
         )
-        
+
         # ResNet34 output channels (layer4) è 512, come ResNet18, quindi il resto non cambia dimensione
         self.rgb_extractor = nn.Sequential(*list(self.rgb_backbone.children())[:-2])
         self.depth_extractor = nn.Sequential(*list(self.depth_backbone.children())[:-2])
@@ -66,43 +67,40 @@ class DenseFusion_Masked_DualAtt_Net34(nn.Module):
         )
 
     def _forward_fusion(self, rgb, depth, mask=None, return_debug=False):
-
         if mask is not None:
+            rgb = rgb * mask
             rgb = rgb * mask
             depth = depth * mask
         
-        # Extract features (ora 14x14)
-        rgb_feat = self.rgb_extractor(rgb)       
-        depth_3ch = torch.cat([depth, depth, depth], dim=1)
-        depth_feat = self.depth_extractor(depth_3ch) 
+        # Extract & Project
+        rgb_feat = self.rgb_extractor(rgb) 
+        rgb_feat = self.project_rgb(rgb_feat) # Include Dropout
         
+        depth_3ch = torch.cat([depth, depth, depth], dim=1)
+        depth_feat = self.depth_extractor(depth_3ch)
+        depth_feat = self.project_depth(depth_feat) # Include Dropout
+        
+        # Attention
         att_map = self.attention_block(depth_feat) 
         rgb_enhanced = rgb_feat * (1 + att_map) 
         depth_enhanced = depth_feat * (1 + att_map) 
         
+        # Fusion
         combined = torch.cat([rgb_enhanced, depth_enhanced], dim=1)
         x = self.fusion_entry(combined)
         x_res = self.fusion_res(x)
         fused_feat = F.relu(x + x_res)
         
-        return fused_feat, None
+        return fused_feat, rgb_enhanced, depth_enhanced, None
 
-    def _weighted_pooling(self, fused_feat, batch_size, return_debug=False, debug_info=None):
-     # --- DECOUPLED INPUTS ---
-        # Concateniamo la feature specifica alla feature fusa ("Skip Connection")
+    def _weighted_pooling(self, fused_feat, rgb_enhanced, depth_enhanced, batch_size):
+        rot_input = torch.cat([fused_feat, rgb_enhanced], dim=1)
+        trans_input = torch.cat([fused_feat, depth_enhanced], dim=1)
         
-        # Rotazione vede Fused + RGB
-        rot_input = torch.cat([fused_feat, rgb_enhanced], dim=1) # [B, 1024, H, W]
         pred_rot_map = self.rot_head(rot_input)
-        
-        # Traslazione vede Fused + Depth
-        trans_input = torch.cat([fused_feat, depth_enhanced], dim=1) # [B, 1024, H, W]
         pred_trans_map = self.trans_head(trans_input)
-        
-        # Confidence usa solo Fused
         conf_logits = self.conf_head(fused_feat)
         
-        # --- POOLING STANDARD ---
         pred_rot_map = pred_rot_map.view(batch_size, 4, -1)   
         pred_trans_map = pred_trans_map.view(batch_size, 3, -1) 
         conf_logits = conf_logits.view(batch_size, 1, -1)     
@@ -118,10 +116,6 @@ class DenseFusion_Masked_DualAtt_Net34(nn.Module):
 
     def forward(self, rgb, depth, mask=None, return_debug=False):
         bs = rgb.size(0)
-        # Recuperiamo le feature separate
         fused, rgb_enh, depth_enh, dbg = self._forward_fusion(rgb, depth, mask, return_debug)
-        
-        # Le passiamo al pooling
         pred_r, pred_t = self._weighted_pooling(fused, rgb_enh, depth_enh, bs)
-        
         return pred_r, pred_t
