@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader
 from plyfile import PlyData
 from utils.Posenet_utils.posenet_dataset_ALL import LineModPoseDataset
 from utils.Posenet_utils.DenseFusion_Loss_log import DenseFusionLoss
-from models.DAMF_DNet import DAMF_Net
+from models.DFMasked_DualAtt_Net import DenseFusion_Masked_DualAtt_Net
 
 class DAMFTurboTrainerA100:
     def __init__(self, config):
@@ -33,7 +33,7 @@ class DAMFTurboTrainerA100:
         self.scaler = torch.cuda.amp.GradScaler()
 
         print("Initializing DenseFusion TURBO Net34 with Decoder (A100 Optimized)...")
-        self.model = DAMF_Net(
+        self.model = DenseFusion_Masked_DualAtt_Net(
             pretrained=True, 
             temperature=self.cfg['temperature']
         ).to(self.device)
@@ -118,7 +118,7 @@ class DAMFTurboTrainerA100:
         return optimizer
 
     def _setup_optimizer(self):
-        return optimizer = optim.AdamW(self.model.parameters(), lr=1e-4, weight_decay=1e-4)
+        return optim.AdamW(self.model.parameters(), lr=1e-4, weight_decay=1e-4)
 
     def _setup_data(self):
         print("Loading Datasets...")

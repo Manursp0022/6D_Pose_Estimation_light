@@ -65,7 +65,6 @@ class DenseFusion_Masked_DualAtt_Net(nn.Module):
         """Helper function condivisa tra forward e refine"""
         # MASKING
         if mask is not None:
-            print("-----> Mask found , Applying mask <-----")
             rgb = rgb * mask
             depth = depth * mask
         
