@@ -11,7 +11,7 @@ from plyfile import PlyData
 from utils.Posenet_utils.posenet_dataset_ALL import LineModPoseDataset
 from utils.Posenet_utils.DenseFusion_Loss_log import DenseFusionLoss
 from models.DFMasked_DualAtt_Net import DenseFusion_Masked_DualAtt_Net
-
+from models.DFMasked_DualAtt_NetVar import DenseFusion_Masked_DualAtt_NetVar
 class DAMFTurboTrainerA100:
     def __init__(self, config):
         self.cfg = config
@@ -33,7 +33,7 @@ class DAMFTurboTrainerA100:
         self.scaler = torch.cuda.amp.GradScaler()
 
         print("Initializing DenseFusion TURBO Net34 with Decoder (A100 Optimized)...")
-        self.model = DenseFusion_Masked_DualAtt_Net(
+        self.model = DenseFusion_Masked_DualAtt_NetVar(
             pretrained=True, 
             temperature=self.cfg['temperature']
         ).to(self.device)
@@ -312,7 +312,7 @@ class DAMFTurboTrainerA100:
                 self.best_val_loss = val_loss
                 early_stop_counter = 0
                 
-                path = os.path.join(self.cfg['save_dir'], 'best_DuallAtt_noDecoder.pth')
+                path = os.path.join(self.cfg['save_dir'], 'DenseFusion_Masked_DualAtt_NetVar.pth')
                 torch.save({
                     'epoch': epoch,
                     'model_state_dict': self.model.state_dict(),
