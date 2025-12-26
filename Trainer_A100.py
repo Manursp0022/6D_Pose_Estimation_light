@@ -67,16 +67,14 @@ class DAMFTurboTrainerA100:
         print(f"Loss Type: {'Weighted' if use_weighted else 'Standard ADD (Paper)'}")
         self.models_tensor = self._load_3d_models_tensor()
 
-        # C. Setup Dataset
         self.train_loader, self.val_loader = self._setup_data()
         
-        # D. Optimizer con Discriminative Learning Rates
         self.optimizer = self._setup_optimizer()
         
         # E. Scheduler
         self.scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
             self.optimizer, 
-            T_0=self.cfg.get('T_0', 10), 
+            T_0=self.cfg.get('T_0', 20), 
             T_mult=self.cfg.get('T_mult', 2), 
             eta_min=self.cfg.get('eta_min', 1e-6)
         )
@@ -108,15 +106,17 @@ class DAMFTurboTrainerA100:
             else:
                 head_params.append(param)
         
-        base_lr = self.cfg.get('lr', 1e-4)
-        backbone_lr = base_lr * 0.1  # 10x più lento per backbone pretrained
+        #base_lr = self.cfg.get('lr', 1e-4)
+        #backbone_lr = base_lr * 0.1  # 10x più lento per backbone pretrained
         
         print(f"Optimizer Setup: Backbone LR={backbone_lr:.2e}, Heads LR={base_lr:.2e}")
         
         optimizer = optim.AdamW([
-            {'params': backbone_params, 'lr': backbone_lr, 'weight_decay': 1e-4},
-            {'params': head_params, 'lr': base_lr, 'weight_decay': 1e-3}
+            model.parameters(), lr=self.cfg['lr'], weight_decay=1e-4
         ])
+
+        #{'params': backbone_params, 'lr': backbone_lr, 'weight_decay': 1e-4}
+        #{'params': head_params, 'lr': base_lr, 'weight_decay': 1e-3}
         
         return optimizer
 
