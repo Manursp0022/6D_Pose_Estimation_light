@@ -9,7 +9,41 @@ from PoseNet_evaluation import PoseNetEvaluator
 from Trainer_A100 import DAMFTurboTrainerA100
 
 if __name__ == "__main__":
+    config = {
+        # Percorsi
+        'dataset_root': "/Users/emanuelerosapepe/Desktop/test_YOLO/Linemod_preprocessed",  # MODIFICA QUESTO
+        'split_val': "data/autosplit_val_ALL.txt",  # MODIFICA QUESTO
+        'model_dir': 'checkpoints/',  # Directory con best_DAMF.pth
+        'save_dir': 'checkpoints_results/',
+        
+        # Parametri
+        'batch_size': 32,
+        'num_workers': 12,  
+        'temperature': 2.0,  # Stesso usato in training
+    }
+    
+    # Esegui valutazione
+    evaluator = DAMF_Evaluator(config)
+    results = evaluator.run()
+    
+    print("\n✅ Evaluation completed!")
+    print(f"Final Accuracy: {results['accuracy']:.2f}%")
+    print(f"Mean ADD: {results['mean_add_cm']:.2f} cm")
 
+    """
+    config = {
+        # Percorsi
+        'dataset_root': "/Users/emanuelerosapepe/Desktop/test_YOLO/Linemod_preprocessed",  
+        'split_val': "data/autosplit_val_ALL.txt", 
+        'model_dir': 'checkpoints/',  
+        'save_dir': 'checkpoints_results/',
+        'batch_size': 32,
+    }
+    
+    evaluator = PoseNetEvaluator(config)
+    evaluator.run()
+    """
+    """
     config = {
         'dataset_root': '/Users/emanuelerosapepe/Desktop/test_YOLO/Linemod_preprocessed',
         'split_train': 'data/autosplit_train_ALL.txt',
@@ -39,7 +73,7 @@ if __name__ == "__main__":
 
     trainer = DAMFTurboTrainerA100(config)
     trainer.run()
-
+    """
     """
 
     config = {
@@ -66,19 +100,7 @@ if __name__ == "__main__":
     print(f"Final Accuracy: {results['accuracy']:.2f}%")
     print(f"Mean ADD: {results['mean_add_cm']:.2f} cm")
     """
-    """
-    config = {
-        # Percorsi
-        'dataset_root': "/Users/emanuelerosapepe/Desktop/test_YOLO/Linemod_preprocessed",  
-        'split_val': "data/autosplit_val_ALL.txt", 
-        'model_dir': 'checkpoints/',  
-        'save_dir': 'checkpoints_results/',
-        'batch_size': 32,
-    }
-    
-    evaluator = PoseNetEvaluator(config)
-    evaluator.run()
-    """
+
     """
     config = {
     'dataset_root': "/Users/emanuelerosapepe/Desktop/test_YOLO/Linemod_preprocessed",

@@ -79,7 +79,7 @@ class DAMF_Evaluator:
             val_ds, 
             batch_size=self.cfg['batch_size'], 
             shuffle=False, 
-            num_workers=self.cfg.get('num_workers', 4),
+            num_workers=self.cfg.get('num_workers', 12),
             pin_memory=True if self.device.type == 'cuda' else False
         )
         
@@ -88,14 +88,14 @@ class DAMF_Evaluator:
 
     def _setup_model(self):
         """Carica il modello DAMF_Net con i pesi addestrati."""
-        print("🧠 Loading DAMF_Net model...")
+        print("🧠 Loading Masked_DualAtt_Net model...")
         
         model = DenseFusion_Masked_DualAtt_Net(
             pretrained=False,  # Non servono pesi ImageNet, carichiamo i tuoi
             temperature=self.cfg.get('temperature', 2.0)
         ).to(self.device)
         
-        weights_path = os.path.join(self.cfg['model_dir'], 'best_turbo_model_A100.pth')
+        weights_path = os.path.join(self.cfg['model_dir'], 'best_DuallAtt_noDecoder.pth')
 
         """
         model = DAMF_Net(
@@ -232,13 +232,14 @@ class DAMF_Evaluator:
                 rgb_batch = batch['image'].to(self.device)
                 depth_batch = batch['depth'].to(self.device)
                 mask_batch = batch['mask'].to(self.device)
-                
+                cam_params = batch['cam_params'].to(self.device, non_blocking=True)
+                bb_info = batch['bbox_norm'].to(self.device, non_blocking=True)
                 gt_translation = batch['translation'].cpu().numpy()  # [B, 3]
                 gt_quats = batch['quaternion']  # [B, 4]
                 class_ids = batch['class_id'].numpy()  # [B]
                 
                 # 1. INFERENCE del modello
-                pred_quats, pred_trans = self.model(rgb_batch, depth_batch, mask_batch)
+                pred_quats, pred_trans = self.model(rgb_batch, depth_batch, bb_info, cam_params, mask_batch)
                 
                 # 2. Converti quaternioni in matrici di rotazione
                 pred_R = self._quaternion_to_matrix(pred_quats)  # [B, 3, 3]
@@ -294,7 +295,7 @@ class DAMF_Evaluator:
                     if is_correct:
                         total_correct += 1
                     total_predictions += 1
-                    all_errors.append(add_error_m)
+                    all_errors.append(add_error_m * 100.0)
                     
                     # Aggiorna statistiche per classe
                     class_stats[obj_id]['total'] += 1
@@ -304,6 +305,7 @@ class DAMF_Evaluator:
         
         # 4. Calcola metriche finali
         accuracy = (total_correct / total_predictions * 100.0) if total_predictions > 0 else 0.0
+        mean_add_cm = np.mean(all_errors) if len(all_errors) > 0 else 0.0
         mean_add_cm = np.mean(all_errors) if len(all_errors) > 0 else 0.0
         median_add_cm = np.median(all_errors) if len(all_errors) > 0 else 0.0
 
@@ -365,7 +367,7 @@ class DAMF_Evaluator:
                 
             obj_name = self.OBJ_NAMES.get(obj_id, f"obj_{obj_id}")
             acc = (stats['correct'] / stats['total']) * 100.0
-            avg_err = np.mean(stats['errors'])
+            avg_err = np.mean(stats['errors']) * 100
             
             print(f"{obj_name:<15} {stats['total']:<10} {acc:>6.2f}%      {avg_err:>8.2f}")
         

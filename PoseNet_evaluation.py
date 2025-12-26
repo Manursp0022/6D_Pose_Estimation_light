@@ -57,7 +57,7 @@ class PoseNetEvaluator:
     def _setup_data(self):
         print(" Loading Validation Dataset...")
         val_ds = LineModPoseDataset(self.cfg['split_val'], self.cfg['dataset_root'], mode='val')
-        loader = DataLoader(val_ds, batch_size=self.cfg['batch_size'], shuffle=False, num_workers=6)
+        loader = DataLoader(val_ds, batch_size=self.cfg['batch_size'], shuffle=False, num_workers=12)
         print(f"   -> Found {len(val_ds)} samples.")
         return loader
 
@@ -148,7 +148,7 @@ class PoseNetEvaluator:
             for batch in tqdm(self.val_loader, desc="Evaluating"):
                 # Dati Ground Truth
                 paths = batch['path']
-                bboxes_gt = batch['bbox'].to(self.device)
+                # = batch['bbox'].to(self.device)
                 intrinsics = batch['cam_params'].to(self.device)
                 gt_translation = batch['translation'].to(self.device)
                 gt_quats = batch['quaternion'].to(self.device)
@@ -247,7 +247,7 @@ class PoseNetEvaluator:
                         pts_3d, obj_id
                     )
 
-                    t_err, r_err_m, r_err_deg = self.metric_calculator.calculate_separated_metrics(
+                    t_err, r_err_m, r_err_deg, tx, ty, tz = self.metric_calculator.calculate_separated_metrics(
                         pred_R_np[i], pred_trans_np[i], 
                         gt_R_np[i], gt_trans_np[i], 
                         pts_3d, obj_id
