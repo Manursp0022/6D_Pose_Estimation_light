@@ -90,7 +90,7 @@ class DAMFTurboTrainerA100:
         }
         self.best_val_loss = float('inf')
 
-    def _setup_optimizer(self):
+    def _setup_separate_optimizer(self):
         """
         Setup optimizer con learning rates differenziati:
         - Backbone pretrained: LR più basso (fine-tuning)
@@ -106,19 +106,19 @@ class DAMFTurboTrainerA100:
             else:
                 head_params.append(param)
         
-        #base_lr = self.cfg.get('lr', 1e-4)
-        #backbone_lr = base_lr * 0.1  # 10x più lento per backbone pretrained
+        base_lr = self.cfg.get('lr', 1e-4)
+        backbone_lr = base_lr * 0.1  # 10x più lento per backbone pretrained
         
-        print(f"Optimizer Setup: Backbone LR={backbone_lr:.2e}, Heads LR={base_lr:.2e}")
-        
-        optimizer = optim.AdamW([
-            model.parameters(), lr=self.cfg['lr'], weight_decay=1e-4
-        ])
-
-        #{'params': backbone_params, 'lr': backbone_lr, 'weight_decay': 1e-4}
-        #{'params': head_params, 'lr': base_lr, 'weight_decay': 1e-3}
+        #print(f"Optimizer Setup: Backbone LR={backbone_lr:.2e}, Heads LR={base_lr:.2e}")
+        optimizer = optim.AdamW[(
+            {'params': backbone_params, 'lr': backbone_lr, 'weight_decay': 1e-4}
+            {'params': head_params, 'lr': base_lr, 'weight_decay': 1e-3}
+        )]
         
         return optimizer
+
+    def _setup_optimizer(self):
+        return optimizer = optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-4)
 
     def _setup_data(self):
         print("Loading Datasets...")
@@ -200,7 +200,7 @@ class DAMFTurboTrainerA100:
             # --- AUTOMATIC MIXED PRECISION ---
             with torch.autocast(device_type='cuda', dtype=torch.float16):
                 # CORRETTO: rimosso return_debug
-                pred_rot, pred_trans = self.model(images, depths,bb_info,cam_params mask=masks)
+                pred_rot, pred_trans = self.model(images, depths,bb_info,cam_params, mask=masks)
                 
                 current_model_points = self.models_tensor[class_ids.long()] 
                 loss, metrics = self.criterion(
@@ -255,7 +255,7 @@ class DAMFTurboTrainerA100:
                 class_ids = batch['class_id'].to(self.device)
 
                 with torch.autocast(device_type='cuda', dtype=torch.float16):
-                    pred_rot, pred_trans = self.model(images, depths,bb_info,cam_params mask=masks)
+                    pred_rot, pred_trans = self.model(images, depths,bb_info,cam_params, mask=masks)
                     
                     current_model_points = self.models_tensor[class_ids.long()]
                     loss, metrics = self.criterion(
