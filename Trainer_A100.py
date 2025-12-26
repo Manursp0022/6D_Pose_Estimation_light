@@ -111,7 +111,7 @@ class DAMFTurboTrainerA100:
         
         #print(f"Optimizer Setup: Backbone LR={backbone_lr:.2e}, Heads LR={base_lr:.2e}")
         optimizer = optim.AdamW[(
-            {'params': backbone_params, 'lr': backbone_lr, 'weight_decay': 1e-4}
+            {'params': backbone_params, 'lr': backbone_lr, 'weight_decay': 1e-4},
             {'params': head_params, 'lr': base_lr, 'weight_decay': 1e-3}
         )]
         
