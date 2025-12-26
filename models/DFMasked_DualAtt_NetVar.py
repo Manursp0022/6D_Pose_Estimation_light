@@ -98,7 +98,7 @@ class DenseFusion_Masked_DualAtt_NetVar(nn.Module):
         
         return fused_feat, rgb_enhanced, debug_info
 
-    def _weighted_pooling(self, fused_feat, rgb_enhanced, batch_size,bb_info,cam_params,return_debug=False, debug_info=None):
+    def _weighted_pooling(self, fused_feat, batch_size, rgb_enhanced, bb_info,cam_params,return_debug=False, debug_info=None):
         """Logica di pooling intelligente condivisa"""
 
         rot_input = torch.cat([fused_feat, rgb_enhanced], dim=1)
@@ -151,11 +151,3 @@ class DenseFusion_Masked_DualAtt_NetVar(nn.Module):
         if return_debug:
             return pred_r, pred_t, dbg_final
         return pred_r, pred_t
-
-    def forward_refine(self, rgb, depth, bb_info, cam_params, mask=None):
-        bs = rgb.size(0)
-        fused_feat, _ = self._forward_fusion(rgb, depth, mask, return_debug=False)
-        pred_r, pred_t, vector_feat, _ = self._weighted_pooling(
-            fused_feat, bs, bb_info, cam_params, return_debug=False, debug_info=None
-        )
-        return pred_r, pred_t, vector_feat
