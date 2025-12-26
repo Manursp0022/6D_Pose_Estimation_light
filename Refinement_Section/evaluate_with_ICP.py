@@ -1,12 +1,12 @@
 import torch
 import numpy as np
 import cv2
-import open3d as o3d
+#import open3d as o3d
 import os
 import scipy.spatial.transform
 from tqdm import tqdm
 from torch.utils.data import DataLoader
-
+from plyfile import PlyData
 # Import dei tuoi moduli custom
 from models.DFMasked_DualAtt_Net import DenseFusion_Masked_DualAtt_Net 
 from utils.Posenet_utils.posenet_dataset_ALL import LineModPoseDataset
@@ -20,7 +20,7 @@ class ICPEvaluator:
             print(">>> Using CUDA (NVIDIA)")
         elif torch.backends.mps.is_available():
             self.device = torch.device("mps")
-            self.num_workers = 0 
+            self.num_workers = 4 
             print(">>> Using MPS (Apple Silicon)")
         else:
             self.device = torch.device("cpu")
@@ -32,6 +32,11 @@ class ICPEvaluator:
             pretrained=False, 
             temperature=self.cfg['temperature']
         ).to(self.device)
+
+        self.DRS = {
+            1: 102.09, 2: 247.50, 4: 172.49, 5: 201.40, 6: 154.54, 8: 261.47,
+            9: 108.99, 10: 164.62, 11: 175.88, 12: 145.54, 13: 278.07, 14: 282.60, 15: 212.35
+        }
         
         ckpt_path = os.path.join(self.cfg['save_dir'], 'best_turbo_model_A100.pth')
         if not os.path.exists(ckpt_path):
@@ -61,45 +66,20 @@ class ICPEvaluator:
         # 3. CARICAMENTO MESH 3D (DATABASE)
         # Le carichiamo in memoria RAM come array numpy per Open3D
         print("Loading 3D Meshes for ICP...")
-        self.models_db = {}
-        mesh_path = os.path.join(self.cfg['dataset_root'], 'models')
-        obj_ids = [1, 2, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15]
-        
-        for oid in obj_ids:
-            ply_path = os.path.join(mesh_path, f"obj_{oid:02d}.ply")
-            if os.path.exists(ply_path):
-                mesh = o3d.io.read_point_cloud(ply_path)
-                # Downsample per velocità (opzionale, ma consigliato)
-                # mesh = mesh.uniform_down_sample(every_k_points=5) 
-                self.models_db[oid] = np.asarray(mesh.points) / 1000.0 # Converti in Metri
-            else:
-                print(f"[WARNING] Mesh {ply_path} not found!")
+        self.models_db = self._load_3d_models()
 
-
-    def _run_icp(self, gt_points, pred_points):
-        """
-        Esegue ICP Point-to-Point tra nuvola predetta (Source) e target (GT/Depth).
-        """
-        source = o3d.geometry.PointCloud()
-        source.points = o3d.utility.Vector3dVector(pred_points)
-        
-        target = o3d.geometry.PointCloud()
-        target.points = o3d.utility.Vector3dVector(gt_points)
-        
-        # Parametri ICP
-        threshold = 0.02 # Cerca corrispondenze entro 2cm
-        trans_init = np.identity(4) # Partiamo dalla posa predetta (nessuno spostamento iniziale)
-        
-        try:
-            reg_p2p = o3d.pipelines.registration.registration_icp(
-                source, target, threshold, trans_init,
-                o3d.pipelines.registration.TransformationEstimationPointToPoint(),
-                o3d.pipelines.registration.ICPConvergenceCriteria(max_iteration=30)
-            )
-            return reg_p2p.transformation
-        except Exception as e:
-            # Fallback se Open3D fallisce (raro)
-            return np.identity(4)
+    def _load_3d_models(self):
+        print(" Loading 3D Models (.ply)...")
+        models_3d = {}
+        models_dir = os.path.join(self.cfg['dataset_root'], 'models')
+        for obj_id in self.DRS.keys():
+            path = os.path.join(models_dir, f"obj_{obj_id:02d}.ply")
+            if os.path.exists(path):
+                ply = PlyData.read(path)
+                vertex = ply['vertex']
+                pts_mm = np.stack([vertex['x'], vertex['y'], vertex['z']], axis=-1)
+                models_3d[obj_id] = pts_mm / 1000.0 
+        return models_3d
 
     def evaluate(self):
         add_errors_basic = []
@@ -150,33 +130,18 @@ class ICPEvaluator:
             # Per ADD-S (simmetrici) servirebbe KDTree, qui facciamo ADD standard asimmetrico.
             err_base = np.mean(np.linalg.norm(pred_pts_world - gt_pts_world, axis=1))
             add_errors_basic.append(err_base)
-            
-            # E. REFINEMENT CON ICP
-            # Allineiamo la predizione (Source) alla GT (Target).
-            # Nella realtà useresti la nuvola estratta dalla Depth Map reale come Target.
-            # Qui usiamo i punti GT come proxy di una "Depth Map perfetta" per vedere il potenziale massimo.
-            
-            refined_transform = self._run_icp(gt_pts_world, pred_pts_world)
-            
-            # Applica la correzione ICP
-            # Punti_Nuovi = T_icp * Punti_Vecchi_Homogenei
-            ones = np.ones((pred_pts_world.shape[0], 1))
-            pred_pts_homo = np.hstack((pred_pts_world, ones)) # [N, 4]
-            pred_pts_refined = (refined_transform @ pred_pts_homo.T).T[:, :3] # [N, 3]
-            
-            err_icp = np.mean(np.linalg.norm(pred_pts_refined - gt_pts_world, axis=1))
-            add_errors_icp.append(err_icp)
 
+        
         # F. STATISTICHE FINALI
         mean_base = np.mean(add_errors_basic)
-        mean_icp = np.mean(add_errors_icp)
+        #mean_icp = np.mean(add_errors_icp)
         
         print("\n" + "="*40)
         print(f" FINAL EVALUATION RESULTS")
         print("="*40)
         print(f" Mean ADD Error (Baseline):  {mean_base*100:.2f} cm")
-        print(f" Mean ADD Error (With ICP):  {mean_icp*100:.2f} cm")
-        print(f" Improvement:                {(mean_base - mean_icp)*100:.2f} cm")
+        #print(f" Mean ADD Error (With ICP):  {mean_icp*100:.2f} cm")
+        #print(f" Improvement:                {(mean_base - mean_icp)*100:.2f} cm")
         print("="*40)
         
-        return mean_base, mean_icp
+        return mean_base

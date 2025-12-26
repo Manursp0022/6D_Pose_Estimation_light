@@ -1,10 +1,81 @@
 #from DFRGBD_Evaluate import DF_RGBD_Net_Evaluator
 #from Refiner_Evaluate import RefinedEvaluator
 import os
-from Refinement_Section.evaluate_with_ICP_Nogt import ICPEvaluator
 import re
 import torch
+from DAMF_Eval import DAMF_Evaluator
+from Refinement_Section.evaluate_with_ICP import ICPEvaluator
+from PoseNet_evaluation import PoseNetEvaluator
 if __name__ == "__main__":
+
+    config = {
+        # Percorsi
+        'dataset_root': "/Users/emanuelerosapepe/Desktop/test_YOLO/Linemod_preprocessed",  # MODIFICA QUESTO
+        'split_val': "data/autosplit_val_ALL.txt",  # MODIFICA QUESTO
+        'model_dir': 'checkpoints/',  # Directory con best_DAMF.pth
+        'save_dir': 'checkpoints_results/',
+        
+        # Parametri
+        'batch_size': 32,
+        'num_workers': 12,  # 0 su Mac, 4-8 su Linux
+        'temperature': 2.0,  # Stesso usato in training
+    }
+    
+    # Crea directory output
+    os.makedirs(config['save_dir'], exist_ok=True)
+    
+    # Esegui valutazione
+    evaluator = DAMF_Evaluator(config)
+    results = evaluator.run()
+    
+    print("\n✅ Evaluation completed!")
+    print(f"Final Accuracy: {results['accuracy']:.2f}%")
+    print(f"Mean ADD: {results['mean_add_cm']:.2f} cm")
+
+    """
+    config = {
+        # Percorsi
+        'dataset_root': "/Users/emanuelerosapepe/Desktop/test_YOLO/Linemod_preprocessed",  
+        'split_val': "data/autosplit_val_ALL.txt", 
+        'model_dir': 'checkpoints/',  
+        'save_dir': 'checkpoints_results/',
+        'batch_size': 32,
+    }
+    
+    evaluator = PoseNetEvaluator(config)
+    evaluator.run()
+    """
+    """
+    config = {
+    'dataset_root': "/Users/emanuelerosapepe/Desktop/test_YOLO/Linemod_preprocessed",
+    'split_val': "data/autosplit_val_ALL.txt",
+    'save_dir': "checkpoints/", 
+    'temperature': 2.0,
+    }
+    
+    evaluator = ICPEvaluator(config)
+    evaluator.evaluate()
+
+    """
+    """
+    config_eval = {
+        'dataset_root': "/Users/emanuelerosapepe/Desktop/test_YOLO/Linemod_preprocessed",
+        'split_val': 'data/autosplit_val_ALL.txt',
+        
+        'checkpoint': 'checkpoints/best_turbo_model_A100.pth', 
+        
+        'batch_size': 24,
+        'temperature': 1.0,
+        'num_points_mesh': 500
+    }
+
+    # 1. Inizializza
+    evaluator = DAMF_Evaluator(config_eval)
+
+    # 2. Lancia valutazione
+    mean_error, accuracy = evaluator.validate()
+    """
+    """
     # Configurazione
     config = {
         'dataset_root': "/content/dataset/Linemod_preprocessed",
@@ -18,6 +89,7 @@ if __name__ == "__main__":
     
     trainer = IterativeRefineTrainer(config)
     trainer.train()
+    """
     """
     config = {
         'dataset_root': "/Users/emanuelerosapepe/Desktop/test_YOLO/Linemod_preprocessed",

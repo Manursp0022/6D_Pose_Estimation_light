@@ -49,7 +49,7 @@ class DenseFusion_Masked_DualAtt_Net(nn.Module):
         
         # Trans Head
         self.trans_head = nn.Sequential(
-            nn.Conv2d(512, 256, 1),
+            nn.Conv2d(520, 256, 1),
             nn.ReLU(),
             nn.Conv2d(256, 3, 1)    
         )
@@ -65,6 +65,7 @@ class DenseFusion_Masked_DualAtt_Net(nn.Module):
         """Helper function condivisa tra forward e refine"""
         # MASKING
         if mask is not None:
+            print("-----> Mask found , Applying mask <-----")
             rgb = rgb * mask
             depth = depth * mask
         
@@ -79,6 +80,7 @@ class DenseFusion_Masked_DualAtt_Net(nn.Module):
         # RESIDUAL ATTENTION: (1 + att) per non perdere segnale
         rgb_enhanced = rgb_feat * (1 + att_map) 
         depth_enhanced = depth_feat * (1 + att_map) 
+        #depth_for_trans = depth_feat
         
         # FUSION + RESIDUAL
         combined = torch.cat([rgb_enhanced, depth_enhanced], dim=1)
@@ -97,15 +99,21 @@ class DenseFusion_Masked_DualAtt_Net(nn.Module):
         
         return fused_feat, debug_info
 
-    def _weighted_pooling(self, fused_feat, batch_size, return_debug=False, debug_info=None):
+    def _weighted_pooling(self, fused_feat, batch_size,bb_info,cam_params,return_debug=False, debug_info=None):
         """Logica di pooling intelligente condivisa"""
+
+        bb_spatial = bb_info.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, 7, 7)      # [B, 4, 7, 7]
+        cam_spatial = cam_params.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, 7, 7)  # [B, 4, 7, 7]
+
         pred_rot_map = self.rot_head(fused_feat)     # [B, 4, 7, 7]
-        pred_trans_map = self.trans_head(fused_feat) # [B, 3, 7, 7]
+        #fused_with_depth = torch.cat([fused_feat,depth_stats], dim=1)
+        trans_input = torch.cat([fused_feat, bb_spatial, cam_spatial], dim=1)
+        pred_trans_map = self.trans_head(trans_input) # [B, 3, 7, 7]
         conf_logits = self.conf_head(fused_feat)     # [B, 1, 7, 7] (Logits)
         
         # Flatten Spatial Dimensions
         pred_rot_map = pred_rot_map.view(batch_size, 4, -1)   # [B, 4, 49]
-        pred_trans_map = pred_trans_map.view(batch_size, 3, -1) # [B, 3, 49]
+        pred_trans_map = pred_trans_map.view(batch_size, 3, -1) # [B, 3, 49] Ha senso ancora questa . view 
         conf_logits = conf_logits.view(batch_size, 1, -1)     # [B, 1, 49]
         
         # Normalize Quaternions (with Epsilon)
@@ -133,19 +141,19 @@ class DenseFusion_Masked_DualAtt_Net(nn.Module):
 
         return pred_rot_global, pred_trans_global, vector_feat_global, debug_info
 
-    def forward(self, rgb, depth, mask=None, return_debug=False):
+    def forward(self, rgb, depth,bb_info, cam_params, mask=None, return_debug=False):
         bs = rgb.size(0)
-        # Passiamo return_debug agli helper
         fused_feat, dbg = self._forward_fusion(rgb, depth, mask, return_debug)
-        pred_r, pred_t, _, dbg_final = self._weighted_pooling(fused_feat, bs, return_debug, dbg)
+        pred_r, pred_t, _, dbg_final = self._weighted_pooling(fused_feat, bs, bb_info, cam_params, return_debug, dbg)
         
         if return_debug:
             return pred_r, pred_t, dbg_final
         return pred_r, pred_t
 
-    def forward_refine(self, rgb, depth, mask=None):
-        # Per il refiner non ci serve il debug solitamente, usiamo False
+    def forward_refine(self, rgb, depth, bb_info, cam_params, mask=None):
         bs = rgb.size(0)
         fused_feat, _ = self._forward_fusion(rgb, depth, mask, return_debug=False)
-        pred_r, pred_t, vector_feat, _ = self._weighted_pooling(fused_feat, bs, return_debug=False, debug_info=None)
+        pred_r, pred_t, vector_feat, _ = self._weighted_pooling(
+            fused_feat, bs, bb_info, cam_params, return_debug=False, debug_info=None
+        )
         return pred_r, pred_t, vector_feat

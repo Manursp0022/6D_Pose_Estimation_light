@@ -13,6 +13,7 @@ from ultralytics import YOLO
 
 # Import dei tuoi modelli e utils
 from models.DenseFusion_RGBD_Net import DenseFusion_RGBD_Net 
+from models.DAMF_DNet import DAMF_Net
 from utils.Posenet_utils.posenet_dataset_ALL import LineModPoseDataset
 from utils.Posenet_utils.PoseEvaluator import PoseEvaluator 
 from utils.Posenet_utils.utils_geometric import crop_square_resize
@@ -37,7 +38,7 @@ class DF_RGBD_Net_Evaluator:
 
         self.val_loader = self._setup_data()
         self.models_3d = self._load_3d_models()
-        self.DF_RGBD = self._setup_DF_RGBD()
+        self.model = self._setup_model()
         self.YOLO = self._setup_YOLO()
         
         self.metric_calculator = PoseEvaluator(np.eye(3))
@@ -60,10 +61,10 @@ class DF_RGBD_Net_Evaluator:
         # num_workers=0 per evitare crash su Mac
         return DataLoader(val_ds, batch_size=self.cfg['batch_size'], shuffle=False, num_workers=2)
 
-    def _setup_DF_RGBD(self):
+    def _setup_model(self):
         print(" Loading DenseFusion RGB-D Model...")
-        model = DenseFusion_RGBD_Net(pretrained=False).to(self.device)
-        weights_path = os.path.join(self.cfg['model_dir'], 'best__DFRGBD.pth')
+        model = DAMF_Net(pretrained=False).to(self.device)
+        weights_path = os.path.join(self.cfg['model_dir'], 'best_DAMF.pth')
         if not os.path.exists(weights_path):
             raise FileNotFoundError(f" Weights not found at: {weights_path}")
         model.load_state_dict(torch.load(weights_path, map_location=self.device))
@@ -114,6 +115,7 @@ class DF_RGBD_Net_Evaluator:
                 gt_quats = batch['quaternion'].to(self.device)
                 class_ids = batch['class_id'].numpy()
                 rgb_batch = batch['image'].to(self.device)
+                mask_batch = batch['mask'].to(self.device)
                 depth_batch = batch['depth'].to(self.device)
                 """
                 # YOLO Inference
@@ -157,7 +159,7 @@ class DF_RGBD_Net_Evaluator:
                 #depth_batch = torch.stack(resnet_depth_list).to(self.device)
                 
                 # 2. Network Inference (Coarse Pose)
-                pred_quats, pred_trans = self.DF_RGBD(rgb_batch, depth_batch)
+                pred_quats, pred_trans = self.model.forward(rgb_batch, depth_batch,mask_batch)
                 
                 #pred_R_np = self._quaternion_to_matrix(pred_quats)
                 #pred_t_np = pred_trans.cpu().numpy()

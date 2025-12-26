@@ -10,11 +10,12 @@ from tqdm import tqdm
 
 
 class LineModPoseDataset(Dataset):
-    def __init__(self, split_file, dataset_root, mode='train', img_size=224, noise_factor=0.05):
+    def __init__(self, split_file, dataset_root, mode='train', img_size=224, noise_factor=0.08):
         self.dataset_root = dataset_root
         self.mode = mode
         self.img_size = img_size
         self.noise_factor = noise_factor
+        self.img_h, self.img_w = 480, 640 
         self.samples = [] #The flat list of ALL possible crops
         
         #split file is ...train_ALL.txt or ...val_ALL.txt
@@ -69,7 +70,14 @@ class LineModPoseDataset(Dataset):
             fy = cam_K_list[4]
             cx = cam_K_list[2]
             cy = cam_K_list[5]
-            cam_params = [fx,fy,cx,cy]
+            #cam_params = [fx,fy,cx,cy]
+
+            cam_params_norm = [
+                fx / self.img_w,  # focal_x normalizzata
+                fy / self.img_h,  # focal_y normalizzata
+                cx / self.img_w,  # principal point x normalizzato [0-1]
+                cy / self.img_h   # principal point y normalizzato [0-1]
+            ]
             
             if img_id_num in gt_data_folder:
                 objs_in_frame = gt_data_folder[img_id_num]
@@ -91,15 +99,32 @@ class LineModPoseDataset(Dataset):
                         if obj_id != target_id_standard:
                             continue
 
+                    x_min, y_min, w_box, h_box = obj['obj_bb']
+
+                    """
+                    x_center = (x_min + w_box / 2) / self.img_w
+                    y_center = (y_min + h_box / 2) / self.img_h
+                    w_norm = w_box / w_img
+                    h_norm = h_box / h_img
+
+                    x_center = max(0, min(1, x_center))
+                    y_center = max(0, min(1, y_center))
+                    w_norm = max(0, min(1, w_norm))
+                    h_norm = max(0, min(1, h_norm))
+
+                    #Ricostruire qui il vettore dopo normalizzazione
+                    coordinates_norm = [x_center,y_center,w_norm,h_norm]
+                    """
+
                     sample = {
                         'img_path': img_path_abs,
                         'depth_path': d_img_path_abs,
                         'mask_path': mask_img_path,
                         'obj_id': obj_id,
-                        'bbox': obj['obj_bb'],
+                        'bbox': [x_min, y_min, w_box, h_box],
                         'R': obj['cam_R_m2c'],
                         't': obj['cam_t_m2c'],
-                        'position_input': cam_params,
+                        'position_input': cam_params_norm,
                     }
                     self.samples.append(sample)
 
@@ -123,6 +148,7 @@ class LineModPoseDataset(Dataset):
         else:
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
+
         # 2. LOAD DEPTH
         d_img = cv2.imread(sample['depth_path'], cv2.IMREAD_UNCHANGED)
         if d_img is None: d_img = np.zeros((480, 640), dtype=np.float32)
@@ -135,6 +161,19 @@ class LineModPoseDataset(Dataset):
             # Fallback: se manca la maschera, assumiamo tutto oggetto (rischioso ma evita crash)
             # oppure tutto nero. Meglio tutto 1 per non azzerare l'input.
             mask = np.ones((480, 640), dtype=np.uint8) * 255
+
+                # Estrai stats sulla regione dell'oggetto (usando la mask)
+
+        #valid_depth = d_img[mask > 0]
+        """
+        depth_stats = np.array([
+            valid_depth.min(),
+            valid_depth.max(),
+            valid_depth.mean(),
+            valid_depth.std()
+        ])
+        depth_stats_tensor = torch.tensor(depth_stats, dtype=torch.float32)
+        """
 
         bbox = sample['bbox']
         R_matrix = np.array(sample['R']).reshape(3, 3)
@@ -164,6 +203,13 @@ class LineModPoseDataset(Dataset):
             new_y = new_cy - new_h / 2
             
             final_bbox = [new_x, new_y, new_w, new_h]
+
+            bbox_norm = [
+                np.clip(new_cx / self.img_w, 0, 1),      # x_center normalizzato
+                np.clip(new_cy / self.img_h, 0, 1),      # y_center normalizzato  
+                np.clip(new_w / self.img_w, 0, 1),       # width normalizzata
+                np.clip(new_h / self.img_h, 0, 1)        # height normalizzata
+            ]
             
             # B. MASK AUGMENTATION ("Il Fastidio")
             # Simuliamo errori di segmentazione di YOLO: Erosion/Dilation
@@ -181,6 +227,13 @@ class LineModPoseDataset(Dataset):
             
         else:
             final_bbox = bbox
+            x, y, w, h = bbox
+            bbox_norm = [
+                (x + w / 2) / self.img_w,
+                (y + h / 2) / self.img_h,
+                w / self.img_w,
+                h / self.img_h
+            ]
             # In validation usiamo la maschera GT pulita (o quella predetta se stessimo testando tutto)
 
         # 4. CROP & RESIZE (Tutti coerenti!)
@@ -207,7 +260,7 @@ class LineModPoseDataset(Dataset):
         trans_tensor = torch.from_numpy(t_vector).float() / 1000.0
 
         params = sample['position_input'] 
-        cam_params = torch.tensor([params[0], params[1], params[2], params[3]], dtype=torch.float32)
+        cam_params = torch.tensor(params, dtype=torch.float32)
 
         return {
             'image': img_tensor,
@@ -217,6 +270,7 @@ class LineModPoseDataset(Dataset):
             'translation': trans_tensor,
             'class_id': target_obj_id,
             'path': sample['img_path'],
-            'bbox': torch.tensor(final_bbox, dtype=torch.float32),
+            'bbox_norm': torch.tensor(bbox_norm, dtype=torch.float32),
             'cam_params': cam_params
+            #'depth_stats': depth_stats_tensor, <--- add only if i want to improve depth
         }

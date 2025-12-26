@@ -15,7 +15,7 @@ from models.DFMasked_DualAtt_Net import DenseFusion_Masked_DualAtt_Net
 from utils.Posenet_utils.DenseFusion_Loss import DenseFusionLoss
 from models.DFMasked_DualAtt_Net34 import DenseFusion_Masked_DualAtt_Net34
 
-class DFTurboTrainerA100:
+class TrainerA100:
     def __init__(self, config):
         self.cfg = config
         

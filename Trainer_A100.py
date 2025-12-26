@@ -35,7 +35,7 @@ class DAMFTurboTrainerA100:
         print("Initializing DenseFusion TURBO Net34 with Decoder (A100 Optimized)...")
         self.model = DAMF_Net(
             pretrained=True, 
-            temperature=self.cfg.get('temperature', 1.0)
+            temperature=self.cfg['temperature']
         ).to(self.device)
 
         if 'resume_from' in self.cfg and self.cfg['resume_from'] is not None:
@@ -189,6 +189,8 @@ class DAMFTurboTrainerA100:
             images = batch['image'].to(self.device, non_blocking=True)
             depths = batch['depth'].to(self.device, non_blocking=True)
             masks  = batch['mask'].to(self.device, non_blocking=True)
+            cam_params = batch['cam_params'].to(self.device, non_blocking=True)
+            bb_info = batch['bbox_norm'].to(self.device, non_blocking=True)
             gt_t = batch['translation'].to(self.device, non_blocking=True)
             gt_q = batch['quaternion'].to(self.device, non_blocking=True)
             class_ids = batch['class_id'].to(self.device)
@@ -198,7 +200,7 @@ class DAMFTurboTrainerA100:
             # --- AUTOMATIC MIXED PRECISION ---
             with torch.autocast(device_type='cuda', dtype=torch.float16):
                 # CORRETTO: rimosso return_debug
-                pred_rot, pred_trans = self.model(images, depths, mask=masks)
+                pred_rot, pred_trans = self.model(images, depths,bb_info,cam_params mask=masks)
                 
                 current_model_points = self.models_tensor[class_ids.long()] 
                 loss, metrics = self.criterion(
@@ -246,12 +248,15 @@ class DAMFTurboTrainerA100:
                 images = batch['image'].to(self.device, non_blocking=True)
                 depths = batch['depth'].to(self.device, non_blocking=True)
                 masks  = batch['mask'].to(self.device, non_blocking=True)
+                cam_params = batch['cam_params'].to(self.device, non_blocking=True)
+                bb_info = batch['bbox_norm'].to(self.device, non_blocking=True)
                 gt_t = batch['translation'].to(self.device, non_blocking=True)
                 gt_q = batch['quaternion'].to(self.device, non_blocking=True)
                 class_ids = batch['class_id'].to(self.device)
 
                 with torch.autocast(device_type='cuda', dtype=torch.float16):
-                    pred_rot, pred_trans = self.model(images, depths, mask=masks)
+                    pred_rot, pred_trans = self.model(images, depths,bb_info,cam_params mask=masks)
+                    
                     current_model_points = self.models_tensor[class_ids.long()]
                     loss, metrics = self.criterion(
                         pred_rot, pred_trans, gt_q, gt_t,
@@ -307,7 +312,7 @@ class DAMFTurboTrainerA100:
                 self.best_val_loss = val_loss
                 early_stop_counter = 0
                 
-                path = os.path.join(self.cfg['save_dir'], 'best_model.pth')
+                path = os.path.join(self.cfg['save_dir'], 'best_DuallAtt_noDecoder.pth')
                 torch.save({
                     'epoch': epoch,
                     'model_state_dict': self.model.state_dict(),

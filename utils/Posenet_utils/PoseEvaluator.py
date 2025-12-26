@@ -45,6 +45,74 @@ class PoseEvaluator:
             return self._calculate_add_s(target_points, estimated_points)
         else:
             return self._calculate_add(target_points, estimated_points)
+    def calculate_separated_metrics(self, pred_R, pred_t, gt_R, gt_t, model_3d_points, obj_id):
+        """
+        Calcola separatamente:
+        1. Errore Traslazione (distanza euclidea centri)
+        2. Errore Rotazione 'Fisico' (ADD applicato solo alla rotazione, ignorando T)
+        3. Errore Rotazione 'Angolare' (Gradi)
+        """
+        # 1. TRANSLATION ERROR (Euclidean Distance in meters)
+        trans_error = np.linalg.norm(gt_t - pred_t)
+
+        # 2. ROTATION ERROR (Physical displacement in meters)
+        # Applichiamo SOLO la rotazione ai punti (T=0) per isolare l'errore rotazionale
+        target_points_rot_only = np.dot(model_3d_points, gt_R.T)
+        est_points_rot_only = np.dot(model_3d_points, pred_R.T)
+
+        if obj_id in self.symmetric_obj_ids:
+            rot_error_m = self._calculate_add_s(target_points_rot_only, est_points_rot_only)
+        else:
+            rot_error_m = self._calculate_add(target_points_rot_only, est_points_rot_only)
+
+        # 3. ROTATION ERROR (Angular in Degrees)
+        # Calcolo R_diff = R_gt * R_pred^T
+        # Trace method: theta = arccos( (tr(R) - 1) / 2 )
+        R_diff = np.dot(gt_R, pred_R.T)
+        trace = np.trace(R_diff)
+        
+        # Clamp per evitare errori numerici fuori da [-1, 1]
+        trace = np.clip((trace - 1) / 2, -1.0, 1.0)
+        rot_error_deg = np.degrees(np.arccos(trace))
+
+        return trans_error, rot_error_m, rot_error_deg
+
+    def calculate_separated_metrics(self, pred_R, pred_t, gt_R, gt_t, model_3d_points, obj_id):
+            """
+            Calcola separatamente:
+            1. Errore Traslazione Totale (Euclideo)
+            2. Errore Traslazione per asse (X, Y, Z)  <-- NUOVO
+            3. Errore Rotazione 'Fisico'
+            4. Errore Rotazione 'Angolare'
+            """
+            # 1. TRANSLATION ERROR (Euclidean Distance in meters)
+            trans_error = np.linalg.norm(gt_t - pred_t)
+            
+            # --- NUOVO: Calcolo errore per singolo asse ---
+            # gt_t e pred_t sono vettori [x, y, z]
+            diff = np.abs(gt_t - pred_t)
+            tx_err = diff[0]
+            ty_err = diff[1]
+            tz_err = diff[2]
+            # ----------------------------------------------
+
+            # 2. ROTATION ERROR (Physical displacement in meters)
+            target_points_rot_only = np.dot(model_3d_points, gt_R.T)
+            est_points_rot_only = np.dot(model_3d_points, pred_R.T)
+
+            if obj_id in self.symmetric_obj_ids:
+                rot_error_m = self._calculate_add_s(target_points_rot_only, est_points_rot_only)
+            else:
+                rot_error_m = self._calculate_add(target_points_rot_only, est_points_rot_only)
+
+            # 3. ROTATION ERROR (Angular in Degrees)
+            R_diff = np.dot(gt_R, pred_R.T)
+            trace = np.trace(R_diff)
+            trace = np.clip((trace - 1) / 2, -1.0, 1.0)
+            rot_error_deg = np.degrees(np.arccos(trace))
+
+            # Restituiamo anche i singoli errori su assi
+            return trans_error, rot_error_m, rot_error_deg, tx_err, ty_err, tz_err
     
     def _calculate_add(self, target_points, estimated_points):
         """

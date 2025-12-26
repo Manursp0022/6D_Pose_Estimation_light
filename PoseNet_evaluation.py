@@ -57,7 +57,7 @@ class PoseNetEvaluator:
     def _setup_data(self):
         print(" Loading Validation Dataset...")
         val_ds = LineModPoseDataset(self.cfg['split_val'], self.cfg['dataset_root'], mode='val')
-        loader = DataLoader(val_ds, batch_size=self.cfg['batch_size'], shuffle=False, num_workers=2)
+        loader = DataLoader(val_ds, batch_size=self.cfg['batch_size'], shuffle=False, num_workers=6)
         print(f"   -> Found {len(val_ds)} samples.")
         return loader
 
@@ -134,10 +134,14 @@ class PoseNetEvaluator:
         
         # Dictionary to store per-class statistics
         class_stats = {oid: {'correct': 0, 'total': 0, 'errors': []} for oid in self.DRS.keys()}
+
+        all_trans_errors = []
+        all_rot_errors_m = []
+        all_rot_errors_deg = []
         
         total_correct = 0
         total_preds = 0
-        all_errors = []
+        all_errors = [] # Questo rimane l'ADD combinato
         YOLO_CONF = 0.5
         
         with torch.no_grad():
@@ -242,6 +246,17 @@ class PoseNetEvaluator:
                         gt_R_np[i], gt_trans_np[i], 
                         pts_3d, obj_id
                     )
+
+                    t_err, r_err_m, r_err_deg = self.metric_calculator.calculate_separated_metrics(
+                        pred_R_np[i], pred_trans_np[i], 
+                        gt_R_np[i], gt_trans_np[i], 
+                        pts_3d, obj_id
+                    )
+
+                    # Accumulo statistiche
+                    all_trans_errors.append(t_err * 100.0)      # Convert to cm
+                    all_rot_errors_m.append(r_err_m * 100.0)    # Convert to cm
+                    all_rot_errors_deg.append(r_err_deg)
                     
                     # Check Correctness (Threshold: 10% of diameter)
                     diameter_m = self.DRS[obj_id] / 1000.0
@@ -265,21 +280,30 @@ class PoseNetEvaluator:
         # Final Text Report
         accuracy = (total_correct / total_preds * 100.0) if total_preds > 0 else 0.0
         mean_add = np.mean(all_errors) if len(all_errors) > 0 else 0.0
+
+        # Medie separate
+        mean_trans = np.mean(all_trans_errors) if len(all_trans_errors) > 0 else 0.0
+        mean_rot_cm = np.mean(all_rot_errors_m) if len(all_rot_errors_m) > 0 else 0.0
+        mean_rot_deg = np.mean(all_rot_errors_deg) if len(all_rot_errors_deg) > 0 else 0.0
         
-        self._print_report(accuracy, mean_add, total_preds)
+        self._print_report(accuracy, mean_add, mean_trans, mean_rot_cm, mean_rot_deg, total_preds)
         
         # Generate Plots
         self._plot_per_class_results(class_stats)
 
-    def _print_report(self, accuracy, mean_add, total):
+    def _print_report(self, accuracy, mean_add, mean_trans, mean_rot_cm, mean_rot_deg, total):
         print("\n" + "="*60)
-        print("FINAL REPORT (ADD Metric)")
+        print("FINAL REPORT (ADD Metric & Separated Breakdown)")
         print("="*60)
-        print(f" Weights used:   {os.path.basename(self.cfg['save_dir'])}")
-        print(f" Samples:        {total}")
+        print(f" Samples Evaluated: {total}")
         print("-" * 40)
-        print(f" Total Accuracy: {accuracy:.2f} %")
-        print(f" Mean ADD Error: {mean_add:.2f} cm")
+        print(f" TOTAL ACCURACY:    {accuracy:.2f} %")
+        print(f" COMBINED ADD Error:{mean_add:.2f} cm")
+        print("-" * 40)
+        print(" ERROR BREAKDOWN:")
+        print(f" -> Translation Err: {mean_trans:.2f} cm")
+        print(f" -> Rotation Err:    {mean_rot_cm:.2f} cm (Displacement on mesh)")
+        print(f" -> Rotation Angle:  {mean_rot_deg:.2f} deg")
         print("="*60)
 
     def _plot_per_class_results(self, class_stats):
