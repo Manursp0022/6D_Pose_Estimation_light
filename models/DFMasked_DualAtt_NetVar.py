@@ -102,7 +102,7 @@ class DenseFusion_Masked_DualAtt_NetVar(nn.Module):
         """Logica di pooling intelligente condivisa"""
 
         rot_input = torch.cat([fused_feat, rgb_enhanced], dim=1)
-        pred_rot_map = self.rot_head(fused_feat)     # [B, 4, 7, 7]
+        pred_rot_map = self.rot_head(rot_input)     # [B, 4, 7, 7]
 
 
         bb_spatial = bb_info.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, 7, 7)      # [B, 4, 7, 7]
