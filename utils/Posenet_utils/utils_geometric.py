@@ -11,6 +11,18 @@ def matrix_to_quaternion(R_matrix):
     quat_wxyz = np.array([quat_scipy[3], quat_scipy[0], quat_scipy[1], quat_scipy[2]])
     return quat_wxyz
 
+def quaternion_to_matrix_np(quat):
+    """
+    Convert quaternion [w, x, y, z] to rotation matrix.
+    """
+    w, x, y, z = quat
+    R = np.array([
+        [1 - 2*y*y - 2*z*z, 2*x*y - 2*z*w, 2*x*z + 2*y*w],
+        [2*x*y + 2*z*w, 1 - 2*x*x - 2*z*z, 2*y*z - 2*x*w],
+        [2*x*z - 2*y*w, 2*y*z + 2*x*w, 1 - 2*x*x - 2*y*y]
+    ])
+    return R
+
 def crop_square_resize(img, bbox, target_size=224, is_depth=False):
     """
     Esegue un ritaglio quadrato centrato sul bbox fornito e ridimensiona.

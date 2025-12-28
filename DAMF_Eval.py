@@ -10,6 +10,7 @@ from scipy.spatial.transform import Rotation as R
 # Import dei tuoi moduli
 from models.DAMF_DNet import DAMF_Net
 from models.DFMasked_DualAtt_Net import DenseFusion_Masked_DualAtt_Net
+from models.DFMasked_DualAtt_NetVar import DenseFusion_Masked_DualAtt_NetVar
 from utils.Posenet_utils.posenet_dataset_ALL import LineModPoseDataset
 from utils.Posenet_utils.PoseEvaluator import PoseEvaluator 
 
@@ -90,12 +91,12 @@ class DAMF_Evaluator:
         """Carica il modello DAMF_Net con i pesi addestrati."""
         print("🧠 Loading Masked_DualAtt_Net model...")
         
-        model = DenseFusion_Masked_DualAtt_Net(
+        model = DenseFusion_Masked_DualAtt_NetVar(
             pretrained=False,  # Non servono pesi ImageNet, carichiamo i tuoi
             temperature=self.cfg.get('temperature', 2.0)
         ).to(self.device)
         
-        weights_path = os.path.join(self.cfg['model_dir'], 'best_DuallAtt_noDecoder.pth')
+        weights_path = os.path.join(self.cfg['model_dir'], 'DenseFusion_Masked_DualAtt_NetVar.pth')
 
         """
         model = DAMF_Net(

@@ -13,7 +13,7 @@ if __name__ == "__main__":
         # Percorsi
         'dataset_root': "/Users/emanuelerosapepe/Desktop/test_YOLO/Linemod_preprocessed",  # MODIFICA QUESTO
         'split_val': "data/autosplit_val_ALL.txt",  # MODIFICA QUESTO
-        'model_dir': 'checkpoints/',  # Directory con best_DAMF.pth
+        'model_dir': 'checkpoints/',  
         'save_dir': 'checkpoints_results/',
         
         # Parametri
