@@ -11,7 +11,7 @@ def matrix_to_quaternion(R_matrix):
     quat_wxyz = np.array([quat_scipy[3], quat_scipy[0], quat_scipy[1], quat_scipy[2]])
     return quat_wxyz
 
-def quaternion_to_matrix_np(quat):
+def quaternion_to_matrix(quat):
     """
     Convert quaternion [w, x, y, z] to rotation matrix.
     """
@@ -22,6 +22,18 @@ def quaternion_to_matrix_np(quat):
         [2*x*z - 2*y*w, 2*y*z + 2*x*w, 1 - 2*x*x - 2*y*y]
     ])
     return R
+
+def quaternion_to_matrix_np(quat):
+    """Convert quaternion [w, x, y, z] to rotation matrix."""
+    quat_xyzw = np.array([quat[1], quat[2], quat[3], quat[0]])
+    return Rot.from_quat(quat_xyzw).as_matrix()
+
+
+def matrix_to_quaternion_np(R):
+    """Convert rotation matrix to quaternion [w, x, y, z]."""
+    r = Rot.from_matrix(R)
+    quat_xyzw = r.as_quat()
+    return np.array([quat_xyzw[3], quat_xyzw[0], quat_xyzw[1], quat_xyzw[2]])
 
 def crop_square_resize(img, bbox, target_size=224, is_depth=False):
     """

@@ -9,24 +9,19 @@ from tqdm import tqdm
 from torch.utils.data import DataLoader
 from plyfile import PlyData
 from utils.Posenet_utils.posenet_dataset_ALL import LineModPoseDataset
+#from utils.Posenet_utils.posenet_dataset_Alt import LineModPoseDataset_Alt
+from utils.Posenet_utils.posenet_dataset_ALLMasked import LineModPoseDatasetMasked
+from utils.Posenet_utils.posenet_dataset_AltMasked import LineModPoseDataset_AltMasked
 from utils.Posenet_utils.DenseFusion_Loss_log import DenseFusionLoss
 from models.DFMasked_DualAtt_Net import DenseFusion_Masked_DualAtt_Net
 from models.DFMasked_DualAtt_NetVar import DenseFusion_Masked_DualAtt_NetVar
+
 class DAMFTurboTrainerA100:
     def __init__(self, config):
         self.cfg = config
         
-        if torch.cuda.is_available():
-            self.device = torch.device("cuda")
-            self.num_workers = 12 
-            torch.set_float32_matmul_precision('high') 
-            torch.backends.cudnn.benchmark = True
-            print(f">>> A100 DETECTED. Using {torch.cuda.get_device_name(0)}")
-            print(f">>> Num Workers set to {self.num_workers}")
-        else:
-            self.device = torch.device("cpu")
-            self.num_workers = 0
-
+        self.device = self._get_device()
+ 
         os.makedirs(self.cfg['save_dir'], exist_ok=True)
 
         # MIXED PRECISION SCALER ---
@@ -90,6 +85,20 @@ class DAMFTurboTrainerA100:
         }
         self.best_val_loss = float('inf')
 
+    def _get_device(self):
+        """Selezione automatica del device migliore disponibile."""
+        if torch.backends.mps.is_available():
+            print("✅ Using Apple MPS acceleration")
+            self.num_workers = 12 
+            return torch.device("mps")
+        elif torch.cuda.is_available():
+            print("✅ Using CUDA")
+            self.num_workers = 12 
+            return torch.device("cuda")
+        else:
+            print("⚠️  Using CPU (slower)")
+            return torch.device("cpu")
+
     def _setup_separate_optimizer(self):
         """
         Setup optimizer con learning rates differenziati:
@@ -122,17 +131,30 @@ class DAMFTurboTrainerA100:
 
     def _setup_data(self):
         print("Loading Datasets...")
-        train_ds = LineModPoseDataset(
-            self.cfg['split_train'], 
-            self.cfg['dataset_root'], 
-            mode='train'
-        )
-        val_ds = LineModPoseDataset(
-            self.cfg['split_val'], 
-            self.cfg['dataset_root'], 
-            mode='val'
-        )
-        
+
+        if self.cfg['training_mode'] == "easy":
+            print("Training mode set to : ",self.cfg['training_mode'])
+            train_ds = LineModPoseDatasetMasked(
+                self.cfg['split_train'], 
+                self.cfg['dataset_root'], 
+                mode='train'
+            )
+            val_ds = LineModPoseDatasetMasked(
+                self.cfg['split_val'], 
+                self.cfg['dataset_root'], 
+                mode='val'
+            )
+        elif self.cfg['training_mode'] == "hard":
+            print("Training mode set to : ",self.cfg['training_mode'])
+            train_ds = LineModPoseDataset_AltMasked(
+                self.cfg['dataset_root'], 
+                mode='train'
+            )
+            val_ds = LineModPoseDataset_AltMasked( 
+                self.cfg['dataset_root'], 
+                mode='val'
+            )
+
         train_loader = DataLoader(
             train_ds, 
             batch_size=self.cfg['batch_size'], 
