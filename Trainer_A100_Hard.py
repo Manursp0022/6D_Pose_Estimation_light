@@ -59,6 +59,7 @@ class DAMFTurboTrainerA100:
             trans_weight=self.cfg.get('trans_weight',0.3),
             use_weighted=use_weighted
         )
+        
         print(f"Loss Type: {'Weighted' if use_weighted else 'Standard ADD (Paper)'}")
         self.models_tensor = self._load_3d_models_tensor()
 
@@ -137,7 +138,7 @@ class DAMFTurboTrainerA100:
         return optimizer
 
     def _setup_optimizer(self):
-        return optim.AdamW(self.model.parameters(), lr=5e-5, weight_decay=1e-4)
+        return optim.AdamW(self.model.parameters(), lr=self.cfg['lr'],, weight_decay=1e-4)
 
     def _setup_data(self):
         print("Loading Datasets...")
