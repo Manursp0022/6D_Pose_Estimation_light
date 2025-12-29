@@ -59,7 +59,7 @@ class DAMFTurboTrainerA100:
             trans_weight=self.cfg.get('trans_weight',0.3),
             use_weighted=use_weighted
         )
-        
+
         print(f"Loss Type: {'Weighted' if use_weighted else 'Standard ADD (Paper)'}")
         self.models_tensor = self._load_3d_models_tensor()
 
@@ -82,7 +82,6 @@ class DAMFTurboTrainerA100:
             factor=0.5,           # Dimezza il LR
             patience=10,          # Aspetta 10 epoche senza miglioramento
             min_lr=1e-6,          # Non scendere sotto questo
-            verbose=True          # Stampa quando riduce
         )
         
         # F. Tracking
