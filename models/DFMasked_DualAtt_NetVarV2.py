@@ -4,68 +4,36 @@ import torch.nn.functional as F
 import torchvision.models as models 
 from utils.Posenet_utils.attention import GeometricAttention 
 
-class DenseFusion_Masked_DualAtt_NetVar(nn.Module):
+class DenseFusion_Masked_DualAtt_NetVarV2(nn.Module):
     def __init__(self, pretrained=True, temperature=2.0):
         super().__init__()
         
         self.temperature = temperature # Idea 2: Scaling
         self.eps = 1e-8                # Idea 1: Stabilità
 
-        # --- 1. BACKBONES ---
-        self.rgb_backbone = models.resnet18(weights='DEFAULT' if pretrained else None)
-        self.depth_backbone = models.resnet18(weights='DEFAULT' if pretrained else None)
+        # BACKBON
+        #self.rgb_backbone = models.resnet18(weights='DEFAULT' if pretrained else None)
+        #self.depth_backbone = models.resnet18(weights='DEFAULT' if pretrained else None)
+        backbone = models.resnet18(weights='DEFAULT' if pretrained else None)
+        self.shared_extractor = nn.Sequential(*list(backbone.children())[:-2])
+
+        self.depth_adapter = nn.Conv2d(1, 3, kernel_size=1)
         
-        # Output: 512 channels, 7x7 spatial
-        self.rgb_extractor = nn.Sequential(*list(self.rgb_backbone.children())[:-2])
-        self.depth_extractor = nn.Sequential(*list(self.depth_backbone.children())[:-2])
-        
-        # --- 2. ATTENTION MODULE ---
+        # ATTENTION MODULE ---
         self.attention_block = GeometricAttention(in_channels=512)
 
         self.feat_dropout = nn.Dropout2d(p=0.3)
         self.head_dropout = nn.Dropout2d(p=0.15)
         
-        # --- 3. DENSE FUSION CON RESIDUAL ---
-        # Input: 1024 -> Project to 512 -> Residual Block
-        self.fusion_entry = nn.Sequential(
-            nn.Conv2d(1024, 512, kernel_size=3, padding=1),
-            nn.BatchNorm2d(512),
-            nn.ReLU()
-        )
-        
-        # Residual Block interno alla fusione
-        self.fusion_res = nn.Sequential(
-            nn.Conv2d(512, 512, kernel_size=3, padding=1),
+        # --- 3. DENSE FUSION  ---
+        self.fusion = nn.Sequential(
+            nn.Conv2d(1024, 512, 1),
             nn.BatchNorm2d(512),
             nn.ReLU(),
-            self.head_dropout,
-            nn.Conv2d(512, 512, kernel_size=3, padding=1),
-            nn.BatchNorm2d(512)
+            nn.Dropout2d(p=0.15)
         )
         
         # --- 4. PIXEL-WISE HEADS ---
-        # Rot Head
-        """
-        self.rot_head = nn.Sequential(
-            nn.Conv2d(1024, 256, 1), 
-            nn.ReLU(),
-            nn.Conv2d(256, 4, 1)    
-        )
-        
-        # Trans Head
-        self.trans_head = nn.Sequential(
-            nn.Conv2d(520, 256, 1),
-            nn.ReLU(),
-            nn.Conv2d(256, 3, 1)    
-        )
-        
-        # Confidence Head (Output Logits per Softmax)
-        self.conf_head = nn.Sequential(
-            nn.Conv2d(1032, 128, 1),
-            nn.ReLU(),
-            nn.Conv2d(128, 1, 1) 
-        )
-        """
         self.rot_head = nn.Sequential(
             nn.Conv2d(1024, 512, 1), 
             nn.ReLU(), 
@@ -97,13 +65,14 @@ class DenseFusion_Masked_DualAtt_NetVar(nn.Module):
         if mask is not None:
             rgb = rgb * mask
             depth = depth * mask
-        
-        # EXTRACT
-        rgb_feat = self.rgb_extractor(rgb)       
-        depth_3ch = torch.cat([depth, depth, depth], dim=1)
-        depth_feat = self.depth_extractor(depth_3ch) 
 
-        #Adding this to avoid overfitting on hard versione
+
+        # Feature extraction (backbone condiviso)
+        rgb_feat = self.shared_extractor(rgb)
+        depth_3ch = self.depth_adapter(depth)
+        depth_feat = self.shared_extractor(depth_3ch)
+
+        # Dropout
         rgb_feat = self.feat_dropout(rgb_feat)
         depth_feat = self.feat_dropout(depth_feat)
         
@@ -113,14 +82,8 @@ class DenseFusion_Masked_DualAtt_NetVar(nn.Module):
         # RESIDUAL ATTENTION: (1 + att) per non perdere segnale
         rgb_enhanced = rgb_feat * (1 + att_map) 
         depth_enhanced = depth_feat * (1 + att_map) 
-        #depth_for_trans = depth_feat
-        
-        # FUSION + RESIDUAL
-        combined = torch.cat([rgb_enhanced, depth_enhanced], dim=1)
-        x = self.fusion_entry(combined)
-        # Residual connection: x + Block(x)
-        x_res = self.fusion_res(x)
-        fused_feat = F.relu(x + x_res) # Residual add & final ReLU
+
+        fused = self.fusion(torch.cat([rgb_enhanced, depth_enhanced], dim=1))
         
         debug_info = {}
         if return_debug:
@@ -130,7 +93,7 @@ class DenseFusion_Masked_DualAtt_NetVar(nn.Module):
             debug_info['att_min']  = att_map.min().item()
             debug_info['att_std']  = att_map.std().item()
         
-        return fused_feat, rgb_enhanced, debug_info
+        return fused, rgb_enhanced, debug_info
 
     def _weighted_pooling(self, fused_feat, batch_size, rgb_enhanced, bb_info,cam_params,return_debug=False, debug_info=None):
         """Logica di pooling intelligente condivisa"""
@@ -162,15 +125,13 @@ class DenseFusion_Masked_DualAtt_NetVar(nn.Module):
         # Weighted Average
         pred_rot_global = torch.sum(pred_rot_map * weights, dim=2)   # [B, 4]
         pred_trans_global = torch.sum(pred_trans_map * weights, dim=2) # [B, 3]
-        
         # Final Normalize
         pred_rot_global = F.normalize(pred_rot_global + self.eps, p=2, dim=1)
         
-        """
         # Global Feature Vector (Weighted)
-        fused_flat = fused_feat.view(batch_size, 512, -1)
-        vector_feat_global = torch.sum(fused_flat * weights, dim=2) # [B, 512]
-        """
+        #fused_flat = fused_feat.view(batch_size, 512, -1)
+        #vector_feat_global = torch.sum(fused_flat * weights, dim=2) # [B, 512]
+        
         if return_debug and debug_info is not None:
             debug_info['conf_max'] = weights.max().item()
             debug_info['conf_mean'] = weights.mean().item()
@@ -186,4 +147,3 @@ class DenseFusion_Masked_DualAtt_NetVar(nn.Module):
         if return_debug:
             return pred_r, pred_t, dbg_final
         return pred_r, pred_t
-
