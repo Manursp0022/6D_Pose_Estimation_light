@@ -5,7 +5,7 @@ import torchvision.models as models
 from utils.Posenet_utils.attention import GeometricAttention 
 
 class DenseFusion_Masked_DualAtt_NetVarV2(nn.Module):
-    def __init__(self, pretrained=True, temperature=1.0):
+    def __init__(self, pretrained=True, temperature=2.0):
         super().__init__()
         
         self.temperature = temperature # Idea 2: Scaling
@@ -129,20 +129,20 @@ class DenseFusion_Masked_DualAtt_NetVarV2(nn.Module):
         pred_rot_global = F.normalize(pred_rot_global + self.eps, p=2, dim=1)
         
         # Global Feature Vector (Weighted)
-        fused_flat = fused_feat.view(batch_size, 512, -1)
-        vector_feat_global = torch.sum(fused_flat * weights, dim=2) # [B, 512]
+        #fused_flat = fused_feat.view(batch_size, 512, -1)
+        #vector_feat_global = torch.sum(fused_flat * weights, dim=2) # [B, 512]
         
         if return_debug and debug_info is not None:
             debug_info['conf_max'] = weights.max().item()
             debug_info['conf_mean'] = weights.mean().item()
             debug_info['conf_std'] = weights.std().item()
 
-        return pred_rot_global, pred_trans_global, vector_feat_global, debug_info
+        return pred_rot_global, pred_trans_global debug_info
 
     def forward(self, rgb, depth,bb_info, cam_params, mask=None, return_debug=False):
         bs = rgb.size(0)
         fused_feat, rgb_enhanced, dbg = self._forward_fusion(rgb, depth, mask, return_debug)
-        pred_r, pred_t, _, dbg_final = self._weighted_pooling(fused_feat, bs, rgb_enhanced, bb_info, cam_params, return_debug, dbg)
+        pred_r, pred_t, dbg_final = self._weighted_pooling(fused_feat, bs, rgb_enhanced, bb_info, cam_params, return_debug, dbg)
         
         if return_debug:
             return pred_r, pred_t, dbg_final

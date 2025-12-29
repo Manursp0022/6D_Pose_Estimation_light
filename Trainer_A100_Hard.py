@@ -27,8 +27,8 @@ class DAMFTurboTrainerA100:
         # MIXED PRECISION SCALER ---
         self.scaler = torch.cuda.amp.GradScaler()
 
-        print("Initializing DenseFusion TURBO Net34 with Decoder (A100 Optimized)...")
-        self.model = DenseFusion_Masked_DualAtt_Net(
+        print("Initializing DenseFusion_Masked_DualAtt_NetVarV2 (A100 Optimized)...")
+        self.model = DenseFusion_Masked_DualAtt_NetVarV2(
             pretrained=True, 
             temperature=self.cfg['temperature']
         ).to(self.device)
@@ -75,10 +75,13 @@ class DAMFTurboTrainerA100:
             eta_min=self.cfg.get('eta_min', 1e-6)
         )
         """
-        self.scheduler = optim.lr_scheduler.CosineAnnealingLR(
+        self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(
             self.optimizer,
-            T_max=100,      # = epochs totali
-            eta_min=1e-6
+            mode='min',           # Riduce quando val_loss smette di scendere
+            factor=0.5,           # Dimezza il LR
+            patience=10,          # Aspetta 10 epoche senza miglioramento
+            min_lr=1e-6,          # Non scendere sotto questo
+            verbose=True          # Stampa quando riduce
         )
         
         # F. Tracking
@@ -318,7 +321,7 @@ class DAMFTurboTrainerA100:
             train_loss, train_rot, train_trans = self.train_epoch(epoch)
             val_loss, val_rot, val_trans = self.validate()
             
-            self.scheduler.step()
+            self.scheduler.step(val_loss)
             
             # Tracking
             self.history['train_loss'].append(train_loss)

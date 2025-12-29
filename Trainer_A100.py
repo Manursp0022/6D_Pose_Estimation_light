@@ -27,8 +27,8 @@ class DAMFTurboTrainerA100:
         # MIXED PRECISION SCALER ---
         self.scaler = torch.cuda.amp.GradScaler()
 
-        print("Initializing DenseFusion TURBO Net34 with Decoder (A100 Optimized)...")
-        self.model = DenseFusion_Masked_DualAtt_Net(
+        print("Initializing DenseFusion_Masked_DualAtt_NetVarV2 (A100 Optimized)...")
+        self.model = DenseFusion_Masked_DualAtt_NetVarV2(
             pretrained=True, 
             temperature=self.cfg['temperature']
         ).to(self.device)

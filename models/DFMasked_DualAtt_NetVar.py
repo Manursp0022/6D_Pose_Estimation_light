@@ -5,7 +5,7 @@ import torchvision.models as models
 from utils.Posenet_utils.attention import GeometricAttention 
 
 class DenseFusion_Masked_DualAtt_NetVar(nn.Module):
-    def __init__(self, pretrained=True, temperature=1.0):
+    def __init__(self, pretrained=True, temperature=2.0):
         super().__init__()
         
         self.temperature = temperature # Idea 2: Scaling
