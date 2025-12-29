@@ -14,7 +14,7 @@ from utils.Posenet_utils.posenet_dataset_ALLMasked import LineModPoseDatasetMask
 from utils.Posenet_utils.posenet_dataset_AltMasked import LineModPoseDataset_AltMasked
 from utils.Posenet_utils.DenseFusion_Loss_log import DenseFusionLoss
 from models.DFMasked_DualAtt_Net import DenseFusion_Masked_DualAtt_Net
-from models.DFMasked_DualAtt_NetVar import DenseFusion_Masked_DualAtt_NetVar
+from models.DFMasked_DualAtt_NetVarV2 import DenseFusion_Masked_DualAtt_NetVarV2
 
 class DAMFTurboTrainerA100:
     def __init__(self, config):
@@ -75,10 +75,10 @@ class DAMFTurboTrainerA100:
             eta_min=self.cfg.get('eta_min', 1e-6)
         )
         """
-        self.scheduler = optim.lr_scheduler.StepLR(
+        self.scheduler = optim.lr_scheduler.CosineAnnealingLR(
             self.optimizer,
-            step_size=30,  # Decay ogni 30 epoche
-            gamma=0.5      # Dimezza il LR
+            T_max=100,      # = epochs totali
+            eta_min=1e-6
         )
         
         # F. Tracking
