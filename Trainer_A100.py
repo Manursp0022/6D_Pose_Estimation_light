@@ -28,7 +28,7 @@ class DAMFTurboTrainerA100:
         self.scaler = torch.cuda.amp.GradScaler()
 
         print("Initializing DenseFusion_Masked_DualAtt_NetVarV2 (A100 Optimized)...")
-        self.model = DenseFusion_Masked_DualAtt_NetVarV2(
+        self.model = DenseFusion_Masked_DualAtt_NetVar(
             pretrained=True, 
             temperature=self.cfg['temperature']
         ).to(self.device)
@@ -67,7 +67,6 @@ class DAMFTurboTrainerA100:
         self.optimizer = self._setup_optimizer()
         
         # E. Scheduler
-        """
         self.scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
             self.optimizer, 
             T_0=self.cfg.get('T_0', 20), 
@@ -80,6 +79,7 @@ class DAMFTurboTrainerA100:
             step_size=30,  # Decay ogni 30 epoche
             gamma=0.5      # Dimezza il LR
         )
+        """
         
         # F. Tracking
         self.history = {
