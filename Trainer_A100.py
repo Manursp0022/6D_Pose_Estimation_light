@@ -134,7 +134,7 @@ class DAMFTurboTrainerA100:
         return optimizer
 
     def _setup_optimizer(self):
-        return optim.AdamW(self.model.parameters(), lr=5e-5, weight_decay=1e-4)
+        return optim.AdamW(self.model.parameters(), lr=1e-4, weight_decay=1e-4)
 
     def _setup_data(self):
         print("Loading Datasets...")
