@@ -35,7 +35,6 @@ class LineModPoseDatasetMasked(Dataset):
         self.mode = mode
         self.img_size = img_size
         self.noise_factor = noise_factor
-        self.mask_contamination_prob = mask_contamination_prob if mode == 'train' else 0.0
         self.img_h, self.img_w = 480, 640 
         self.samples = []
         
@@ -43,8 +42,6 @@ class LineModPoseDatasetMasked(Dataset):
             image_paths_raw = [line.strip() for line in f.readlines() if line.strip()]
 
         print(f"[{mode.upper()}] Dataset indexing (Scene-Level Augmentation)...")
-        if mode == 'train':
-            print(f"[{mode.upper()}] Mask contamination probability: {mask_contamination_prob}")
         
         loaded_gts = {} 
         cam_infos_cache = {}
@@ -173,7 +170,7 @@ class LineModPoseDatasetMasked(Dataset):
             if sample['use_mask_all']:
                 # === FOLDER 02: Decidi se usare maschera pulita o contaminata ===
                 use_contaminated = (self.mode == 'train')
-                
+                print("using contaminated")
                 if use_contaminated:
                     # Maschera "sporca": include tutti gli oggetti nel crop
                     mask = self._extract_contaminated_mask(mask_raw)

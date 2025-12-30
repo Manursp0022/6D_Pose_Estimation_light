@@ -21,7 +21,7 @@ OBJID_TO_MASK_PIXEL = {
 }
 
 class LineModPoseDataset_AltMasked(Dataset):
-    def __init__(self, dataset_root, mode='train', img_size=224, noise_factor=0.08):
+    def __init__(self, dataset_root, mode='train', img_size=224, noise_factor=0.08, aug_intensity='medium'):
         """
         Args:
             dataset_root (str): Percorso alla root del dataset (es. .../Linemod_preprocessed)
@@ -36,6 +36,8 @@ class LineModPoseDataset_AltMasked(Dataset):
         self.noise_factor = noise_factor
         self.img_h, self.img_w = 480, 640 
         self.samples = [] 
+
+        self._setup_aug_params(aug_intensity)
 
         obj_ids = ['01', '02', '04', '05', '06', '08', '09', '10', '11', '12', '13', '14', '15']
         
@@ -184,6 +186,36 @@ class LineModPoseDataset_AltMasked(Dataset):
     def __len__(self):
         return len(self.samples)
 
+    def _setup_aug_params(self, intensity):
+        """Configura parametri augmentation in base all'intensità"""
+        if intensity == 'light':
+            self.aug_prob = 0.3
+            self.brightness_range = (0.9, 1.1)
+            self.contrast_range = (0.9, 1.1)
+            self.blur_kernel_max = 3
+            self.noise_std = 5
+            self.hue_shift = 5
+            self.sat_range = (0.95, 1.05)
+            self.depth_noise_std = 0.005
+        elif intensity == 'medium':
+            self.aug_prob = 0.5
+            self.brightness_range = (0.8, 1.2)
+            self.contrast_range = (0.8, 1.2)
+            self.blur_kernel_max = 5
+            self.noise_std = 10
+            self.hue_shift = 10
+            self.sat_range = (0.9, 1.1)
+            self.depth_noise_std = 0.01
+        else:  # aggressive
+            self.aug_prob = 0.7
+            self.brightness_range = (0.6, 1.4)
+            self.contrast_range = (0.7, 1.3)
+            self.blur_kernel_max = 7
+            self.noise_std = 15
+            self.hue_shift = 15
+            self.sat_range = (0.8, 1.2)
+            self.depth_noise_std = 0.02
+
     def _extract_clean_mask(self, mask_raw, obj_id):
         """Estrae maschera pulita usando la mappatura pixel corretta"""
         if obj_id in OBJID_TO_MASK_PIXEL:
@@ -197,6 +229,86 @@ class LineModPoseDataset_AltMasked(Dataset):
         """Usa la maschera così com'è (tutti gli oggetti visibili nel crop)"""
         # Binarizza: tutto ciò che non è sfondo (0) diventa 255
         return np.where(mask_raw > 0, 255, 0).astype(np.uint8)
+
+    def _augment_rgb(self, img):
+        """
+        Augmentation RGB aggressiva.
+        Input: numpy array RGB (H, W, 3) uint8
+        Output: numpy array RGB (H, W, 3) uint8
+        """
+        img = img.copy()
+        
+        # 1. Brightness & Contrast
+        if np.random.rand() < self.aug_prob:
+            alpha = np.random.uniform(*self.contrast_range)  # contrast
+            beta = np.random.uniform(-30, 30) * (self.brightness_range[1] - 1) / 0.2  # brightness scaled
+            img = cv2.convertScaleAbs(img, alpha=alpha, beta=beta)
+        
+        # 2. Gaussian Blur
+        if np.random.rand() < self.aug_prob * 0.6:
+            k = np.random.choice([3, 5, self.blur_kernel_max])
+            if k % 2 == 0:
+                k += 1
+            img = cv2.GaussianBlur(img, (k, k), 0)
+        
+        # 3. Gaussian Noise
+        if np.random.rand() < self.aug_prob * 0.5:
+            noise = np.random.normal(0, self.noise_std, img.shape).astype(np.float32)
+            img = np.clip(img.astype(np.float32) + noise, 0, 255).astype(np.uint8)
+        
+        # 4. HSV Perturbation (Hue & Saturation)
+        if np.random.rand() < self.aug_prob * 0.5:
+            hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV).astype(np.float32)
+            # Hue shift
+            hsv[:, :, 0] = (hsv[:, :, 0] + np.random.uniform(-self.hue_shift, self.hue_shift)) % 180
+            # Saturation scale
+            hsv[:, :, 1] = np.clip(hsv[:, :, 1] * np.random.uniform(*self.sat_range), 0, 255)
+            img = cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2RGB)
+        
+        # 5. Random Shadow (simula illuminazione non uniforme)
+        if np.random.rand() < self.aug_prob * 0.3:
+            h, w = img.shape[:2]
+            # Crea gradiente casuale
+            x1, x2 = np.random.randint(0, w, 2)
+            shadow_mask = np.linspace(0.5, 1.0, w).reshape(1, -1)
+            if np.random.rand() < 0.5:
+                shadow_mask = shadow_mask[:, ::-1]
+            shadow_mask = np.tile(shadow_mask, (h, 1))
+            img = (img * shadow_mask[:, :, np.newaxis]).astype(np.uint8)
+        
+        # 6. Channel Shuffle (raro, per robustezza)
+        if np.random.rand() < 0.1:
+            channels = [0, 1, 2]
+            np.random.shuffle(channels)
+            img = img[:, :, channels]
+        
+        return img
+
+    def _augment_depth(self, depth):
+        """
+        Augmentation Depth.
+        Input: numpy array (H, W) float32 in metri
+        Output: numpy array (H, W) float32 in metri
+        """
+        depth = depth.copy()
+        
+        # 1. Depth noise (simula rumore sensore)
+        if np.random.rand() < self.aug_prob:
+            noise = np.random.normal(0, self.depth_noise_std, depth.shape).astype(np.float32)
+            depth = depth + noise
+            depth = np.maximum(depth, 0)  # No negative depth
+        
+        # 2. Depth scale perturbation (simula calibrazione imperfetta)
+        if np.random.rand() < self.aug_prob * 0.3:
+            scale = np.random.uniform(0.98, 1.02)
+            depth = depth * scale
+        
+        # 3. Missing depth simulation (dropout casuale)
+        if np.random.rand() < self.aug_prob * 0.2:
+            mask = np.random.rand(*depth.shape) > 0.05  # 5% dropout
+            depth = depth * mask
+        
+        return depth
 
     def __getitem__(self, idx):
         sample = self.samples[idx]
@@ -303,8 +415,11 @@ class LineModPoseDataset_AltMasked(Dataset):
         img_crop = crop_square_resize(img, final_bbox, self.img_size, is_depth=False)
         d_img_crop = crop_square_resize(d_img, final_bbox, self.img_size, is_depth=True)
         mask_crop = crop_square_resize(mask, final_bbox, self.img_size, is_depth=True)
-        
         mask_crop = (mask_crop > 127).astype(np.float32)
+
+        if self.mode == 'train':
+            img_crop = self._augment_rgb(img_crop)
+            d_img_crop = self._augment_depth(d_img_crop)
         
         # 5. TO TENSOR
         img_tensor = self.transform(img_crop)
@@ -318,6 +433,7 @@ class LineModPoseDataset_AltMasked(Dataset):
 
         params = sample['position_input'] 
         cam_params = torch.tensor(params, dtype=torch.float32)
+
 
         return {
             'image': img_tensor,

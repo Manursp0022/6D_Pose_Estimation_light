@@ -22,8 +22,8 @@ class DenseFusion_Masked_DualAtt_NetVar(nn.Module):
         # --- 2. ATTENTION MODULE ---
         self.attention_block = GeometricAttention(in_channels=512)
 
-        self.feat_dropout = nn.Dropout2d(p=0.3)
-        self.head_dropout = nn.Dropout2d(p=0.15)
+        self.feat_dropout = nn.Dropout2d(p=0.4)
+        self.head_dropout = nn.Dropout2d(p=0.2)
         
         # --- 3. DENSE FUSION CON RESIDUAL ---
         # Input: 1024 -> Project to 512 -> Residual Block
@@ -45,17 +45,24 @@ class DenseFusion_Masked_DualAtt_NetVar(nn.Module):
         
         # --- 4. PIXEL-WISE HEADS ---
         # Rot Head
+        """
         self.rot_head = nn.Sequential(
             nn.Conv2d(1024, 256, 1), 
             nn.ReLU(),
             nn.Conv2d(256, 4, 1)    
         )
+        """
+        self.rot_head = nn.Sequential(
+            nn.Conv2d(1024, 128, 1), 
+            nn.ReLU(),
+            nn.Conv2d(128, 4, 1)    
+        )
         
         # Trans Head
         self.trans_head = nn.Sequential(
-            nn.Conv2d(520, 256, 1),
+            nn.Conv2d(520, 128, 1),
             nn.ReLU(),
-            nn.Conv2d(256, 3, 1)    
+            nn.Conv2d(128, 3, 1)    
         )
         
         # Confidence Head (Output Logits per Softmax)

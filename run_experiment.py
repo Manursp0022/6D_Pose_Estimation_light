@@ -11,63 +11,26 @@ from Trainer_A100 import DAMFTurboTrainerA100
 if __name__ == "__main__":
 
     config = {
-        'dataset_root': '/Users/emanuelerosapepe/Desktop/test_YOLO/Linemod_preprocessed',
-        'split_train': 'data/autosplit_train_ALL.txt',
-        'split_val': 'data/autosplit_val_ALL.txt',
-
-        # SALVA IN UNA CARTELLA DIVERSA per non sovrascrivere il best model precedente!
-        'save_dir': 'checkpoints/',
-        'training_mode' : 'hard',
-        'lr' : 1e-4,
-
-        # === LOSS ESTREMA (Focus Traslazione) ===
-        'use_weighted_loss': False,
-        'rot_weight': 0.1,      # Mantenimento (Freeze logico)
-        'trans_weight': 3.0,    # SPINTA MASSIMA (era 3.0, osiamo 4.0)
-
-        'lr': 1e-4,  # Molto basso, perfetto per non rompere la rotazione
-
-        'T_0': 20,    # Un ciclo lungo e calmo
-        'T_mult': 2,
-        'eta_min': 1e-6, # Scende quasi a zero alla fine
-
-        # === SETTINGS ===
-        'batch_size': 32, # Rimaniamo a 32 per stabilità
-        'epochs': 100,
-        'early_stop_patience': 25,
-
-        'temperature': 2.0, # Temperatura standard
-        'num_points_mesh': 500,
-    }
-
-    trainer = DAMFTurboTrainerA100(config)
-    trainer.run()
-
-    """
-    config = {
         # Percorsi
-        'dataset_root': "",  # MODIFICA QUESTO
+        'dataset_root': "/Users/emanuelerosapepe/Desktop/test_YOLO/Linemod_preprocessed",  # MODIFICA QUESTO
         'split_val': "data/autosplit_val_ALL.txt",  # MODIFICA QUESTO
         'model_dir': 'checkpoints/',  # Directory con best_DAMF.pth
         'save_dir': 'checkpoints_results/',
-        
-        # Parametri
+        'training_mode': 'easy',
+        'model_old': False,
         'batch_size': 32,
         'num_workers': 12,  
         'temperature': 2.0,  # Stesso usato in training
     }
-    
-    # Crea directory output
-    os.makedirs(config['save_dir'], exist_ok=True)
-    
+
     # Esegui valutazione
     evaluator = DAMF_Evaluator(config)
     results = evaluator.run()
-    
+
     print("\n✅ Evaluation completed!")
     print(f"Final Accuracy: {results['accuracy']:.2f}%")
     print(f"Mean ADD: {results['mean_add_cm']:.2f} cm")
-    """
+
     """
     config = {
         # Percorsi

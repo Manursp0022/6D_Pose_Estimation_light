@@ -13,7 +13,8 @@ from models.DFMasked_DualAtt_Net import DenseFusion_Masked_DualAtt_Net
 from models.DFMasked_DualAtt_NetVar import DenseFusion_Masked_DualAtt_NetVar
 from utils.Posenet_utils.posenet_dataset_ALL import LineModPoseDataset
 from utils.Posenet_utils.PoseEvaluator import PoseEvaluator 
-
+from utils.Posenet_utils.posenet_dataset_AltMasked import LineModPoseDataset_AltMasked
+from utils.Posenet_utils.posenet_dataset_ALLMasked import LineModPoseDatasetMasked
 
 class DAMF_Evaluator:
     
@@ -69,11 +70,24 @@ class DAMF_Evaluator:
     def _setup_data(self):
         """Carica il dataset di validazione."""
         print("📦 Loading Validation Dataset...")
-        val_ds = LineModPoseDataset(
-            self.cfg['split_val'], 
-            self.cfg['dataset_root'], 
-            mode='val'
-        )
+        if self.cfg['model_old'] :
+            val_ds = LineModPoseDataset(
+                self.cfg['split_val'], 
+                self.cfg['dataset_root'], 
+                mode='val'
+            )
+        else:
+            if self.cfg['training_mode'] == "easy" : 
+                val_ds = LineModPoseDatasetMasked(
+                    self.cfg['split_val'], 
+                    self.cfg['dataset_root'], 
+                    mode='val'
+                )
+            elif self.cfg['training_mode'] == "hard":
+                val_ds = LineModPoseDataset_AltMasked( 
+                    self.cfg['dataset_root'], 
+                    mode='val'
+                )
         
         # num_workers=0 è più sicuro su Mac, 2-4 su Linux/Windows
         val_loader = DataLoader(
@@ -96,7 +110,7 @@ class DAMF_Evaluator:
             temperature=self.cfg.get('temperature', 2.0)
         ).to(self.device)
         
-        weights_path = os.path.join(self.cfg['model_dir'], 'DenseFusion_Masked_DualAtt_NetVar.pth')
+        weights_path = os.path.join(self.cfg['model_dir'], 'DenseFusion_Masked_DualAtt_NetVar_Dropout.pth')
 
         """
         model = DAMF_Net(
