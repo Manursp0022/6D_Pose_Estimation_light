@@ -22,36 +22,20 @@ class DenseFusion_Masked_DualAtt_NetVarAgg(nn.Module):
         # --- 2. ATTENTION MODULE ---
         self.attention_block = GeometricAttention(in_channels=512)
 
-        self.feat_dropout = nn.Dropout2d(p=0.4)
-        self.head_dropout = nn.Dropout2d(p=0.2)
+        self.feat_dropout = nn.Dropout2d(p=0.6)
+        self.head_dropout = nn.Dropout2d(p=0.3)
         
         # --- 3. DENSE FUSION CON RESIDUAL ---
         # Input: 1024 -> Project to 512 -> Residual Block
         self.fusion_entry = nn.Sequential(
-            nn.Conv2d(1024, 512, kernel_size=3, padding=1),
-            nn.BatchNorm2d(512),
-            nn.ReLU()
-        )
-        
-        # Residual Block interno alla fusione
-        self.fusion_res = nn.Sequential(
-            nn.Conv2d(512, 512, kernel_size=3, padding=1),
+            nn.Conv2d(1024, 512, kernel_size=1), 
             nn.BatchNorm2d(512),
             nn.ReLU(),
-            self.head_dropout,
-            nn.Conv2d(512, 512, kernel_size=3, padding=1),
-            nn.BatchNorm2d(512)
+            self.head_dropout() # Aggiungi dropout anche qui
         )
         
         # --- 4. PIXEL-WISE HEADS ---
         # Rot Head
-        """
-        self.rot_head = nn.Sequential(
-            nn.Conv2d(1024, 256, 1), 
-            nn.ReLU(),
-            nn.Conv2d(256, 4, 1)    
-        )
-        """
         self.rot_head = nn.Sequential(
             nn.Conv2d(1024, 128, 1), 
             nn.ReLU(),
@@ -98,10 +82,7 @@ class DenseFusion_Masked_DualAtt_NetVarAgg(nn.Module):
         
         # FUSION + RESIDUAL
         combined = torch.cat([rgb_enhanced, depth_enhanced], dim=1)
-        x = self.fusion_entry(combined)
-        # Residual connection: x + Block(x)
-        x_res = self.fusion_res(x)
-        fused_feat = F.relu(x + x_res) # Residual add & final ReLU
+        fused_feat = self.fusion_entry(combined)
         
         debug_info = {}
         if return_debug:

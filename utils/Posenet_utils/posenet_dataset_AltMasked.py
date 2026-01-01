@@ -393,7 +393,8 @@ class LineModPoseDataset_AltMasked(Dataset):
             
             # MASK AUGMENTATION (erosion/dilation)
             chance = np.random.rand()
-            kernel_size = np.random.randint(3, 8)
+            #kernel_size = np.random.randint(3, 8) #kernel changes from 3 to 8 and determine how aggressive is the erosion/dilatation
+            kernel_size = np.random.randint(3, 15)
             kernel = np.ones((kernel_size, kernel_size), np.uint8)
             
             if chance < 0.4: 

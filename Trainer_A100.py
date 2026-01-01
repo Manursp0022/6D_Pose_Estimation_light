@@ -16,7 +16,6 @@ from utils.Posenet_utils.DenseFusion_Loss_log import DenseFusionLoss
 from models.DFMasked_DualAtt_Net import DenseFusion_Masked_DualAtt_Net
 from models.DFMasked_DualAtt_NetVar import DenseFusion_Masked_DualAtt_NetVar
 from models.DFMasked_DualAtt_NetVarAggressive import DenseFusion_Masked_DualAtt_NetVarAgg
-
 class DAMFTurboTrainerA100:
     def __init__(self, config):
         self.cfg = config
@@ -65,7 +64,9 @@ class DAMFTurboTrainerA100:
 
         self.train_loader, self.val_loader = self._setup_data()
         
-        self.optimizer = self._setup_optimizer()
+        #self.optimizer = self._setup_optimizer()
+
+        self.optimizer = self._setup_separate_optimizer()
         
         # E. Scheduler
         self.scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
@@ -92,6 +93,23 @@ class DAMFTurboTrainerA100:
             'val_trans_loss': []
         }
         self.best_val_loss = float('inf')
+
+    def _freeze_bn_stats(self):
+        """
+        Blocca le statistiche (running_mean/var) di tutti i layer Batch Norm
+        nelle backbone. Fondamentale per fine-tuning su piccoli dataset.
+        """
+        # 1. Metti le backbone in modalità eval (così la BN non aggiorna le statistiche)
+        self.model.rgb_backbone.eval()
+        self.model.depth_backbone.eval()
+        
+        # 2. (Opzionale ma consigliato) Blocca anche i parametri affini (weight/bias) della BN
+        for module in [self.model.rgb_backbone, self.model.depth_backbone]:
+            for m in module.modules():
+                if isinstance(m, torch.nn.BatchNorm2d):
+                    m.eval()        # Usa statistiche salvate
+                    m.weight.requires_grad = False # Non aggiornare gamma
+                    m.bias.requires_grad = False   # Non aggiornare beta
 
     def _get_device(self):
         """Selezione automatica del device migliore disponibile."""
@@ -127,10 +145,10 @@ class DAMFTurboTrainerA100:
         backbone_lr = base_lr * 0.1  # 10x più lento per backbone pretrained
         
         #print(f"Optimizer Setup: Backbone LR={backbone_lr:.2e}, Heads LR={base_lr:.2e}")
-        optimizer = optim.AdamW[(
-            {'params': backbone_params, 'lr': backbone_lr, 'weight_decay': 1e-4},
-            {'params': head_params, 'lr': base_lr, 'weight_decay': 1e-3}
-        )]
+        optimizer = optim.AdamW([
+            {'params': backbone_params, 'lr': backbone_lr, 'weight_decay': 1e-3}, # Alza weight decay qui
+            {'params': head_params, 'lr': base_lr, 'weight_decay': 1e-4}
+        ])
         
         return optimizer
 
@@ -208,6 +226,8 @@ class DAMFTurboTrainerA100:
 
     def train_epoch(self, epoch):
         self.model.train()
+        self._freeze_bn_stats()
+
         running_loss = 0.0
         running_rot_loss = 0.0
         running_trans_loss = 0.0
@@ -240,7 +260,7 @@ class DAMFTurboTrainerA100:
                 )
 
             # Scaled Backward Pass
-            self.scaler.scale(loss).backward()
+            self.scaler.scale(loss).backward() #scaler multiplies the loss by a large number (e.g. x1000) before calculating the gradients (.scale(loss).backward()). This makes the gradients ‘manageable’ numbers.
             
             # Gradient clipping per stabilità
             self.scaler.unscale_(self.optimizer)

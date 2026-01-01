@@ -8,24 +8,21 @@ class DenseFusion_Masked_DualAtt_NetVar(nn.Module):
     def __init__(self, pretrained=True, temperature=2.0):
         super().__init__()
         
-        self.temperature = temperature # Idea 2: Scaling
-        self.eps = 1e-8                # Idea 1: Stabilità
+        self.temperature = temperature 
+        self.eps = 1e-8                
 
-        # --- 1. BACKBONES ---
         self.rgb_backbone = models.resnet18(weights='DEFAULT' if pretrained else None)
         self.depth_backbone = models.resnet18(weights='DEFAULT' if pretrained else None)
         
-        # Output: 512 channels, 7x7 spatial
         self.rgb_extractor = nn.Sequential(*list(self.rgb_backbone.children())[:-2])
         self.depth_extractor = nn.Sequential(*list(self.depth_backbone.children())[:-2])
         
-        # --- 2. ATTENTION MODULE ---
         self.attention_block = GeometricAttention(in_channels=512)
 
         self.feat_dropout = nn.Dropout2d(p=0.3)
         self.head_dropout = nn.Dropout2d(p=0.15)
         
-        # --- 3. DENSE FUSION CON RESIDUAL ---
+        #FUSION with RESIDUAL
         # Input: 1024 -> Project to 512 -> Residual Block
         self.fusion_entry = nn.Sequential(
             nn.Conv2d(1024, 512, kernel_size=3, padding=1),
@@ -43,7 +40,7 @@ class DenseFusion_Masked_DualAtt_NetVar(nn.Module):
             nn.BatchNorm2d(512)
         )
         
-        # --- 4. PIXEL-WISE HEADS ---
+        # Pixel wise heads
         # Rot Head
         self.rot_head = nn.Sequential(
             nn.Conv2d(1024, 256, 1), 
@@ -129,7 +126,7 @@ class DenseFusion_Masked_DualAtt_NetVar(nn.Module):
         pred_rot_map = F.normalize(pred_rot_map + self.eps, p=2, dim=1)
         
         # --- WEIGHT CALCULATION ---
-        # Softmax con Temperatura sui logits
+        # Softmax with Temperature onlogits
         weights = F.softmax(conf_logits / self.temperature, dim=2) # [B, 1, 49]
         
         # Weighted Average
