@@ -58,7 +58,7 @@ class DenseFusion_Masked_DualAtt_NetVar(nn.Module):
         
         # Confidence Head (Output Logits per Softmax)
         self.conf_head = nn.Sequential(
-            #nn.Conv2d(1032, 128, 1),originale
+            #nn.Conv2d(1032, 128, 1),original
             nn.Conv2d(512, 128, 1),
             nn.ReLU(),
             nn.Conv2d(128, 1, 1) 
@@ -81,11 +81,16 @@ class DenseFusion_Masked_DualAtt_NetVar(nn.Module):
         depth_feat = self.feat_dropout(depth_feat)
         
         # DUAL ATTENTION
-        att_map = self.attention_block(depth_feat) 
-        
+        #att_map = self.attention_block(depth_feat) original
+        att_map_depth = self.attention_block(depth_feat)
+        att_map_rgb = self.attention_block(rgb_feat)
+
         # RESIDUAL ATTENTION: (1 + att) per non perdere segnale
-        rgb_enhanced = rgb_feat * (1 + att_map) 
-        depth_enhanced = depth_feat * (1 + att_map) #[B, 512, 7, 7]
+        #rgb_enhanced = rgb_feat * (1 + att_map)  originale
+        #depth_enhanced = depth_feat * (1 + att_map) #[B, 512, 7, 7] originale
+
+        rgb_enhanced = rgb_feat * (1 + att_map_depth)
+        depth_enhanced  = depth_feat * (1 + att_map_rgb)
         #depth_for_trans = depth_feat
         
         # FUSION + RESIDUAL
@@ -113,8 +118,7 @@ class DenseFusion_Masked_DualAtt_NetVar(nn.Module):
 
         bb_spatial = bb_info.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, 7, 7)      # [B, 4, 7, 7]
         cam_spatial = cam_params.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, 7, 7)  # [B, 4, 7, 7]
-        #trans_input = torch.cat([fused_feat, bb_spatial, cam_spatial], dim=1) original
-        trans_input = torch.cat([fused_feat, depth_enhanced, bb_spatial, cam_spatial], dim=1)
+        trans_input = torch.cat([fused_feat, bb_spatial, cam_spatial], dim=1) original
         pred_trans_map = self.trans_head(trans_input) # [B, 3, 7, 7]
 
         #conf_input = torch.cat([fused_feat, rgb_enhanced, bb_spatial, cam_spatial], dim=1) original
