@@ -2,8 +2,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.models as models 
-from utils.Posenet_utils.attention import GeometricAttention 
-
+#from utils.Posenet_utils.attention import GeometricAttention 
+from utils.Posenet_utils.attentionV2 import GeometricAttention 
 class DenseFusion_Masked_DualAtt_NetVar(nn.Module):
     def __init__(self, pretrained=True, temperature=2.0):
         super().__init__()
@@ -50,7 +50,7 @@ class DenseFusion_Masked_DualAtt_NetVar(nn.Module):
         
         # Trans Head
         self.trans_head = nn.Sequential(
-            nn.Conv2d(520, 256, 1),
+            nn.Conv2d(1032, 256, 1),
             nn.ReLU(),
             nn.Conv2d(256, 3, 1)    
         )
@@ -83,7 +83,7 @@ class DenseFusion_Masked_DualAtt_NetVar(nn.Module):
         
         # RESIDUAL ATTENTION: (1 + att) per non perdere segnale
         rgb_enhanced = rgb_feat * (1 + att_map) 
-        depth_enhanced = depth_feat * (1 + att_map) 
+        depth_enhanced = depth_feat * (1 + att_map) #[B, 512, 7, 7]
         #depth_for_trans = depth_feat
         
         # FUSION + RESIDUAL
@@ -101,9 +101,9 @@ class DenseFusion_Masked_DualAtt_NetVar(nn.Module):
             debug_info['att_min']  = att_map.min().item()
             debug_info['att_std']  = att_map.std().item()
         
-        return fused_feat, rgb_enhanced, debug_info
+        return fused_feat, rgb_enhanced, depth_enhanced, debug_info
 
-    def _weighted_pooling(self, fused_feat, batch_size, rgb_enhanced, bb_info,cam_params,return_debug=False, debug_info=None):
+    def _weighted_pooling(self, fused_feat, batch_size, rgb_enhanced, depth_enhanced, bb_info,cam_params,return_debug=False, debug_info=None):
         """Logica di pooling intelligente condivisa"""
 
         rot_input = torch.cat([fused_feat, rgb_enhanced], dim=1)
@@ -111,7 +111,8 @@ class DenseFusion_Masked_DualAtt_NetVar(nn.Module):
 
         bb_spatial = bb_info.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, 7, 7)      # [B, 4, 7, 7]
         cam_spatial = cam_params.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, 7, 7)  # [B, 4, 7, 7]
-        trans_input = torch.cat([fused_feat, bb_spatial, cam_spatial], dim=1)
+        #trans_input = torch.cat([fused_feat, bb_spatial, cam_spatial], dim=1)
+        trans_input = torch.cat([fused_feat, depth_enhanced, bb_spatial, cam_spatial], dim=1)
         pred_trans_map = self.trans_head(trans_input) # [B, 3, 7, 7]
 
         conf_input = torch.cat([fused_feat, rgb_enhanced, bb_spatial, cam_spatial], dim=1)
@@ -150,8 +151,8 @@ class DenseFusion_Masked_DualAtt_NetVar(nn.Module):
 
     def forward(self, rgb, depth,bb_info, cam_params, mask=None, return_debug=False):
         bs = rgb.size(0)
-        fused_feat, rgb_enhanced, dbg = self._forward_fusion(rgb, depth, mask, return_debug)
-        pred_r, pred_t, dbg_final = self._weighted_pooling(fused_feat, bs, rgb_enhanced, bb_info, cam_params, return_debug, dbg)
+        fused_feat, rgb_enhanced, depth_enhanced, dbg = self._forward_fusion(rgb, depth, mask, return_debug)
+        pred_r, pred_t, dbg_final = self._weighted_pooling(fused_feat, bs, rgb_enhanced, depth_enhanced,  bb_info, cam_params, return_debug, dbg)
         
         if return_debug:
             return pred_r, pred_t, dbg_final
