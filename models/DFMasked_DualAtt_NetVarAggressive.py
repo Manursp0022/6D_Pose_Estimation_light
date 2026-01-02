@@ -31,7 +31,7 @@ class DenseFusion_Masked_DualAtt_NetVarAgg(nn.Module):
             nn.Conv2d(1024, 512, kernel_size=1), 
             nn.BatchNorm2d(512),
             nn.ReLU(),
-            self.head_dropout() # Aggiungi dropout anche qui
+            self.head_dropout # Aggiungi dropout anche qui
         )
         
         # --- 4. PIXEL-WISE HEADS ---

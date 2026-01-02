@@ -94,23 +94,6 @@ class DAMFTurboTrainerA100:
         }
         self.best_val_loss = float('inf')
 
-    def _freeze_bn_stats(self):
-        """
-        Blocca le statistiche (running_mean/var) di tutti i layer Batch Norm
-        nelle backbone. Fondamentale per fine-tuning su piccoli dataset.
-        """
-        # 1. Metti le backbone in modalità eval (così la BN non aggiorna le statistiche)
-        self.model.rgb_backbone.eval()
-        self.model.depth_backbone.eval()
-        
-        # 2. (Opzionale ma consigliato) Blocca anche i parametri affini (weight/bias) della BN
-        for module in [self.model.rgb_backbone, self.model.depth_backbone]:
-            for m in module.modules():
-                if isinstance(m, torch.nn.BatchNorm2d):
-                    m.eval()        # Usa statistiche salvate
-                    m.weight.requires_grad = False # Non aggiornare gamma
-                    m.bias.requires_grad = False   # Non aggiornare beta
-
     def _get_device(self):
         """Selezione automatica del device migliore disponibile."""
         if torch.backends.mps.is_available():
@@ -226,7 +209,6 @@ class DAMFTurboTrainerA100:
 
     def train_epoch(self, epoch):
         self.model.train()
-        self._freeze_bn_stats()
 
         running_loss = 0.0
         running_rot_loss = 0.0
