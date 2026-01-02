@@ -16,6 +16,8 @@ from utils.Posenet_utils.DenseFusion_Loss_log import DenseFusionLoss
 from models.DFMasked_DualAtt_Net import DenseFusion_Masked_DualAtt_Net
 from models.DFMasked_DualAtt_NetVar import DenseFusion_Masked_DualAtt_NetVar
 from models.DFMasked_DualAtt_NetVarAggressive import DenseFusion_Masked_DualAtt_NetVarAgg
+
+
 class DAMFTurboTrainerA100:
     def __init__(self, config):
         self.cfg = config
@@ -28,7 +30,7 @@ class DAMFTurboTrainerA100:
         self.scaler = torch.cuda.amp.GradScaler()
 
         print("Initializing  DenseFusion_Masked_DualAtt_NetVarAgg (A100 Optimized)...")
-        self.model = DenseFusion_Masked_DualAtt_NetVarAgg(
+        self.model = DenseFusion_Masked_DualAtt_NetVar(
             pretrained=True, 
             temperature=self.cfg['temperature']
         ).to(self.device)
