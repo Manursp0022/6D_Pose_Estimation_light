@@ -29,7 +29,7 @@ class DAMFTurboTrainerA100:
         # MIXED PRECISION SCALER ---
         self.scaler = torch.cuda.amp.GradScaler()
 
-        print("Initializing  DenseFusion_Masked_DualAtt_NetVarAgg (A100 Optimized)...")
+        print("Initializing  DenseFusion_Masked_DualAtt_NetVar (A100 Optimized)...")
         self.model = DenseFusion_Masked_DualAtt_NetVar(
             pretrained=True, 
             temperature=self.cfg['temperature']
@@ -138,7 +138,7 @@ class DAMFTurboTrainerA100:
         return optimizer
 
     def _setup_optimizer(self):
-        return optim.AdamW(self.model.parameters(), lr=1e-4, weight_decay=1e-4)
+        return optim.AdamW(self.model.parameters(), lr=self.cfg.get('lr', 1e-4), weight_decay=1e-4)
 
     def _setup_data(self):
         print("Loading Datasets...")
