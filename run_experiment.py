@@ -16,7 +16,7 @@ if __name__ == "__main__":
         'split_val': "data/autosplit_val_ALL.txt",  # MODIFICA QUESTO
         'model_dir': 'checkpoints/',  # Directory con best_DAMF.pth
         'save_dir': 'checkpoints_results/',
-        'training_mode': 'easy',
+        'training_mode': 'hard',
         'model_old': False,
         'batch_size': 32,
         'num_workers': 12,  

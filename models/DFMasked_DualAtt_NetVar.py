@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.models as models 
 from utils.Posenet_utils.attention import GeometricAttention 
-from utils.Posenet_utils.Coordinates_Att import CoordinateAttention
+
 class DenseFusion_Masked_DualAtt_NetVar(nn.Module):
     def __init__(self, pretrained=True, temperature=2.0):
         super().__init__()
@@ -17,8 +17,7 @@ class DenseFusion_Masked_DualAtt_NetVar(nn.Module):
         self.rgb_extractor = nn.Sequential(*list(self.rgb_backbone.children())[:-2])
         self.depth_extractor = nn.Sequential(*list(self.depth_backbone.children())[:-2])
         
-        #self.attention_block = GeometricAttention(in_channels=512)
-        self.attention_block = CoordinateAttention(in_channels=512)
+        self.attention_block = GeometricAttention(in_channels=512)
 
         self.feat_dropout = nn.Dropout2d(p=0.3)
         self.head_dropout = nn.Dropout2d(p=0.15)
@@ -51,6 +50,7 @@ class DenseFusion_Masked_DualAtt_NetVar(nn.Module):
         
         # Trans Head
         self.trans_head = nn.Sequential(
+            #nn.Conv2d(520, 256, 1), original
             nn.Conv2d(1032, 256, 1),
             nn.ReLU(),
             nn.Conv2d(256, 3, 1)    
@@ -58,7 +58,8 @@ class DenseFusion_Masked_DualAtt_NetVar(nn.Module):
         
         # Confidence Head (Output Logits per Softmax)
         self.conf_head = nn.Sequential(
-            nn.Conv2d(1032, 128, 1),
+            #nn.Conv2d(1032, 128, 1),originale
+            nn.Conv2d(512, 128, 1),
             nn.ReLU(),
             nn.Conv2d(128, 1, 1) 
         )
@@ -112,11 +113,12 @@ class DenseFusion_Masked_DualAtt_NetVar(nn.Module):
 
         bb_spatial = bb_info.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, 7, 7)      # [B, 4, 7, 7]
         cam_spatial = cam_params.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, 7, 7)  # [B, 4, 7, 7]
-        #trans_input = torch.cat([fused_feat, bb_spatial, cam_spatial], dim=1)
+        #trans_input = torch.cat([fused_feat, bb_spatial, cam_spatial], dim=1) original
         trans_input = torch.cat([fused_feat, depth_enhanced, bb_spatial, cam_spatial], dim=1)
         pred_trans_map = self.trans_head(trans_input) # [B, 3, 7, 7]
 
-        conf_input = torch.cat([fused_feat, rgb_enhanced, bb_spatial, cam_spatial], dim=1)
+        #conf_input = torch.cat([fused_feat, rgb_enhanced, bb_spatial, cam_spatial], dim=1) original
+        conf_input = torch.cat([fused_feat], dim=1) 
         conf_logits = self.conf_head(conf_input)   # [B, 1, 7, 7] (Logits)
         
         # Flatten Spatial Dimensions
