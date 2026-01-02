@@ -50,8 +50,7 @@ class DenseFusion_Masked_DualAtt_NetVar(nn.Module):
         
         # Trans Head
         self.trans_head = nn.Sequential(
-            #nn.Conv2d(520, 256, 1), original
-            nn.Conv2d(1032, 256, 1),
+            nn.Conv2d(520, 256, 1), original
             nn.ReLU(),
             nn.Conv2d(256, 3, 1)    
         )
@@ -102,11 +101,14 @@ class DenseFusion_Masked_DualAtt_NetVar(nn.Module):
         
         debug_info = {}
         if return_debug:
-            # Calcolo statistiche solo se richiesto
-            debug_info['att_mean'] = att_map.mean().item()
-            debug_info['att_max']  = att_map.max().item()
-            debug_info['att_min']  = att_map.min().item()
-            debug_info['att_std']  = att_map.std().item()
+            print("Attention map rgb info: ")
+            debug_info['att_max_rgb']  = att_map_rgb.max().item()
+            debug_info['att_min_rgb']  = att_map_rgb.min().item()
+            debug_info['att_std_rgb']  = att_map_rgb.std().item()
+            print("Attention map depth info: ")
+            debug_info['att_max_depth']  = att_map_rgb.max().item()
+            debug_info['att_min_depth']  = att_map_rgb.min().item()
+            debug_info['att_std_depth']  = att_map_rgb.std().item()
         
         return fused_feat, rgb_enhanced, depth_enhanced, debug_info
 
@@ -118,7 +120,7 @@ class DenseFusion_Masked_DualAtt_NetVar(nn.Module):
 
         bb_spatial = bb_info.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, 7, 7)      # [B, 4, 7, 7]
         cam_spatial = cam_params.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, 7, 7)  # [B, 4, 7, 7]
-        trans_input = torch.cat([fused_feat, bb_spatial, cam_spatial], dim=1) original
+        trans_input = torch.cat([fused_feat, bb_spatial, cam_spatial], dim=1) 
         pred_trans_map = self.trans_head(trans_input) # [B, 3, 7, 7]
 
         #conf_input = torch.cat([fused_feat, rgb_enhanced, bb_spatial, cam_spatial], dim=1) original
