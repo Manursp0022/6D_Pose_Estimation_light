@@ -66,9 +66,9 @@ class DAMFTurboTrainerA100:
 
         self.train_loader, self.val_loader = self._setup_data()
         
-        #self.optimizer = self._setup_optimizer()
+        self.optimizer = self._setup_optimizer()
 
-        self.optimizer = self._setup_separate_optimizer()
+        #self.optimizer = self._setup_separate_optimizer()
         
         # E. Scheduler
         self.scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
