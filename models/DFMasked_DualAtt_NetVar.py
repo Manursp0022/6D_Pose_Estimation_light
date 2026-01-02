@@ -2,8 +2,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.models as models 
-#from utils.Posenet_utils.attention import GeometricAttention 
-from utils.Posenet_utils.attentionV2 import GeometricAttention 
+from utils.Posenet_utils.attention import GeometricAttention 
+from utils.Posenet_utils.Coordinates_Att import CoordinateAttention
 class DenseFusion_Masked_DualAtt_NetVar(nn.Module):
     def __init__(self, pretrained=True, temperature=2.0):
         super().__init__()
@@ -17,7 +17,8 @@ class DenseFusion_Masked_DualAtt_NetVar(nn.Module):
         self.rgb_extractor = nn.Sequential(*list(self.rgb_backbone.children())[:-2])
         self.depth_extractor = nn.Sequential(*list(self.depth_backbone.children())[:-2])
         
-        self.attention_block = GeometricAttention(in_channels=512)
+        #self.attention_block = GeometricAttention(in_channels=512)
+        self.attention_block = CoordinateAttention(in_channels=512)
 
         self.feat_dropout = nn.Dropout2d(p=0.3)
         self.head_dropout = nn.Dropout2d(p=0.15)
