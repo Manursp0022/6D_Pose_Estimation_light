@@ -13,9 +13,12 @@ from utils.Posenet_utils.posenet_dataset_ALL import LineModPoseDataset
 from utils.Posenet_utils.posenet_dataset_ALLMasked import LineModPoseDatasetMasked
 from utils.Posenet_utils.posenet_dataset_AltMasked import LineModPoseDataset_AltMasked
 from utils.Posenet_utils.DenseFusion_Loss_log import DenseFusionLoss
+
 from models.DFMasked_DualAtt_Net import DenseFusion_Masked_DualAtt_Net
 from models.DFMasked_DualAtt_NetVar import DenseFusion_Masked_DualAtt_NetVar
 from models.DFMasked_DualAtt_NetVarGlobal import DenseFusion_Masked_DualAtt_NetVarGlobal
+from models.DFMasked_DualAtt_NetVar_Weighted_WRefiner import DenseFusion_Masked_DualAtt_NetVarWRef
+from models.DFMasked_DualAtt_NetVarGlobal_WRefiner import DenseFusion_Masked_DualAtt_NetVarGlobal_WRef
 
 class DAMFTurboTrainerA100:
     def __init__(self, config):
@@ -35,10 +38,19 @@ class DAMFTurboTrainerA100:
             temperature=self.cfg['temperature']
         ).to(self.device)
         """
-        print("Initializing  DenseFusion_Masked_DualAtt_NetVarGlobal (A100 Optimized)...")
+        print("Initializing  DenseFusion_Masked_DualAtt_NetVarWRefr (A100 Optimized)...")
+
+        """
         self.model = DenseFusion_Masked_DualAtt_NetVarGlobal(
             pretrained=True, 
         ).to(self.device)
+        """
+
+        self.model = DenseFusion_Masked_DualAtt_NetVarWRefr(
+            pretrained=True, 
+            temperature=self.cfg['temperature']
+        ).to(self.device)
+
 
         if 'resume_from' in self.cfg and self.cfg['resume_from'] is not None:
             print(f"🔄 FINE-TUNING MODE: Loading weights from {self.cfg['resume_from']}")

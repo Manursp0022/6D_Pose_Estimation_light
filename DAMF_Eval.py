@@ -6,11 +6,12 @@ from tqdm import tqdm
 from torch.utils.data import DataLoader
 from plyfile import PlyData
 from scipy.spatial.transform import Rotation as R
-
-# Import dei tuoi moduli
-from models.DAMF_DNet import DAMF_Net
+from models.DFMasked_DualAtt_NetVar_WRefiner import DenseFusion_Masked_DualAtt_NetVarWRef
 from models.DFMasked_DualAtt_Net import DenseFusion_Masked_DualAtt_Net
 from models.DFMasked_DualAtt_NetVar import DenseFusion_Masked_DualAtt_NetVar
+from models.DFMasked_DualAtt_NetVar import DenseFusion_Masked_DualAtt_NetVar
+from models.DFMasked_DualAtt_NetVarGlobal import DenseFusion_Masked_DualAtt_NetVarGlobal
+
 from utils.Posenet_utils.posenet_dataset_ALL import LineModPoseDataset
 from utils.Posenet_utils.PoseEvaluator import PoseEvaluator 
 from utils.Posenet_utils.posenet_dataset_AltMasked import LineModPoseDataset_AltMasked
@@ -105,14 +106,14 @@ class DAMF_Evaluator:
         """Carica il modello DAMF_Net con i pesi addestrati."""
         print("🧠 Loading Masked_DualAtt_Net model...")
         
-        model = DenseFusion_Masked_DualAtt_NetVar(
-            pretrained=False,  # Non servono pesi ImageNet, carichiamo i tuoi
-            temperature=self.cfg.get('temperature', 2.0)
+        model = DenseFusion_Masked_DualAtt_NetVarGlobal(
+            pretrained=False  # Non servono pesi ImageNet, carichiamo i tuoi
+            #temperature=self.cfg.get('temperature', 2.0)
         ).to(self.device)
         
         #weights_path = os.path.join(self.cfg['model_dir'], 'DenseFusion_Masked_DualAttNet_Hard1cm.pth')
-        weights_path = os.path.join(self.cfg['model_dir'], 'DenseFusion_Masked_DualAtt_NetVar_Dropout.pth')
-
+        #weights_path = os.path.join(self.cfg['model_dir'], 'DenseFusion_Masked_DualAtt_NetVar_Dropout.pth')
+        weights_path = os.path.join(self.cfg['model_dir'], 'DenseFusion_Masked_DualAtt_NetVarGlobaleasy.pth')
         """
         model = DAMF_Net(
             pretrained=False,  # Non servono pesi ImageNet, carichiamo i tuoi
