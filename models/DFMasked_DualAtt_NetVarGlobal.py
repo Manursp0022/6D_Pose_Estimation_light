@@ -4,11 +4,10 @@ import torch.nn.functional as F
 import torchvision.models as models 
 from utils.Posenet_utils.attention import GeometricAttention 
 
-class DenseFusion_Masked_DualAtt_NetVar(nn.Module):
-    def __init__(self, pretrained=True, temperature=2.0):
+class DenseFusion_Masked_DualAtt_NetVarGlobal(nn.Module):
+    def __init__(self, pretrained=True):
         super().__init__()
         
-        self.temperature = temperature 
         self.eps = 1e-8                
 
         self.rgb_backbone = models.resnet18(weights='DEFAULT' if pretrained else None)
@@ -54,13 +53,7 @@ class DenseFusion_Masked_DualAtt_NetVar(nn.Module):
             nn.ReLU(),
             nn.Conv2d(256, 3, 1)    
         )
-        
-        # Confidence Head (Output Logits per Softmax)
-        self.conf_head = nn.Sequential(
-            nn.Conv2d(1032, 128, 1),
-            nn.ReLU(),
-            nn.Conv2d(128, 1, 1) 
-        )
+
     
     def _forward_fusion(self, rgb, depth, mask=None, return_debug=False):
         """Helper function condivisa tra forward e refine"""
@@ -102,8 +95,7 @@ class DenseFusion_Masked_DualAtt_NetVar(nn.Module):
         
         return fused_feat, rgb_enhanced, depth_enhanced, debug_info
 
-    def _weighted_pooling(self, fused_feat, batch_size, rgb_enhanced, depth_enhanced, bb_info,cam_params,return_debug=False, debug_info=None):
-        """Logica di pooling intelligente condivisa"""
+    def _global_pooling(self, fused_feat, batch_size, rgb_enhanced, depth_enhanced, bb_info,cam_params,return_debug=False, debug_info=None):
 
         rot_input = torch.cat([fused_feat, rgb_enhanced], dim=1)
         pred_rot_map = self.rot_head(rot_input)     # [B, 4, 7, 7]
@@ -113,33 +105,13 @@ class DenseFusion_Masked_DualAtt_NetVar(nn.Module):
         trans_input = torch.cat([fused_feat, bb_spatial, cam_spatial], dim=1) 
         pred_trans_map = self.trans_head(trans_input) # [B, 3, 7, 7]
 
-        conf_input = torch.cat([fused_feat, rgb_enhanced, bb_spatial, cam_spatial], dim=1) 
-        conf_logits = self.conf_head(conf_input)   # [B, 1, 7, 7] (Logits)
-        
-        # Flatten Spatial Dimensions
-        pred_rot_map = pred_rot_map.view(batch_size, 4, -1)   # [B, 4, 49]
-        pred_trans_map = pred_trans_map.view(batch_size, 3, -1) # [B, 3, 49] Ha senso ancora questa . view 
-        conf_logits = conf_logits.view(batch_size, 1, -1)     # [B, 1, 49]
-        
-        # Normalize Quaternions (with Epsilon)
-        pred_rot_map = F.normalize(pred_rot_map + self.eps, p=2, dim=1)
-        
-        # --- WEIGHT CALCULATION ---
-        # Softmax with Temperature onlogits
-        weights = F.softmax(conf_logits / self.temperature, dim=2) # [B, 1, 49]
-        
-        # Weighted Average
-        pred_rot_global = torch.sum(pred_rot_map * weights, dim=2)   # [B, 4]
-        pred_trans_global = torch.sum(pred_trans_map * weights, dim=2) # [B, 3]
+        # GLOBAL AVERAGE POOLING (invece di weighted)
+        pred_rot_global = pred_rot_map.mean(dim=[2, 3])     # [B, 4]
+        pred_trans_global = pred_trans_map.mean(dim=[2, 3]) # [B, 3]
         
         # Final Normalize
         pred_rot_global = F.normalize(pred_rot_global + self.eps, p=2, dim=1)
         
-        """
-        # Global Feature Vector (Weighted)
-        fused_flat = fused_feat.view(batch_size, 512, -1)
-        vector_feat_global = torch.sum(fused_flat * weights, dim=2) # [B, 512]
-        """
         if return_debug and debug_info is not None:
             debug_info['conf_max'] = weights.max().item()
             debug_info['conf_mean'] = weights.mean().item()
@@ -150,7 +122,7 @@ class DenseFusion_Masked_DualAtt_NetVar(nn.Module):
     def forward(self, rgb, depth,bb_info, cam_params, mask=None, return_debug=False):
         bs = rgb.size(0)
         fused_feat, rgb_enhanced, depth_enhanced, dbg = self._forward_fusion(rgb, depth, mask, return_debug)
-        pred_r, pred_t, dbg_final = self._weighted_pooling(fused_feat, bs, rgb_enhanced, depth_enhanced,  bb_info, cam_params, return_debug, dbg)
+        pred_r, pred_t, dbg_final = self._global_pooling(fused_feat, bs, rgb_enhanced, depth_enhanced,  bb_info, cam_params, return_debug, dbg)
         
         if return_debug:
             return pred_r, pred_t, dbg_final

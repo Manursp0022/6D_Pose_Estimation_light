@@ -110,7 +110,8 @@ class DAMF_Evaluator:
             temperature=self.cfg.get('temperature', 2.0)
         ).to(self.device)
         
-        weights_path = os.path.join(self.cfg['model_dir'], 'DenseFusion_Masked_DualAttNet_Hard1cm.pth')
+        #weights_path = os.path.join(self.cfg['model_dir'], 'DenseFusion_Masked_DualAttNet_Hard1cm.pth')
+        weights_path = os.path.join(self.cfg['model_dir'], 'DenseFusion_Masked_DualAtt_NetVar_Dropout.pth')
 
         """
         model = DAMF_Net(

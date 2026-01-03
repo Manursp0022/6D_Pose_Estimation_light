@@ -15,8 +15,7 @@ from utils.Posenet_utils.posenet_dataset_AltMasked import LineModPoseDataset_Alt
 from utils.Posenet_utils.DenseFusion_Loss_log import DenseFusionLoss
 from models.DFMasked_DualAtt_Net import DenseFusion_Masked_DualAtt_Net
 from models.DFMasked_DualAtt_NetVar import DenseFusion_Masked_DualAtt_NetVar
-from models.DFMasked_DualAtt_NetVarAggressive import DenseFusion_Masked_DualAtt_NetVarAgg
-
+from models.DFMasked_DualAtt_NetVarGlobal import DenseFusion_Masked_DualAtt_NetVarGlobal
 
 class DAMFTurboTrainerA100:
     def __init__(self, config):
@@ -29,10 +28,16 @@ class DAMFTurboTrainerA100:
         # MIXED PRECISION SCALER ---
         self.scaler = torch.cuda.amp.GradScaler()
 
+        """
         print("Initializing  DenseFusion_Masked_DualAtt_NetVar (A100 Optimized)...")
         self.model = DenseFusion_Masked_DualAtt_NetVar(
             pretrained=True, 
             temperature=self.cfg['temperature']
+        ).to(self.device)
+        """
+        print("Initializing  DenseFusion_Masked_DualAtt_NetVarGlobal (A100 Optimized)...")
+        self.model = DenseFusion_Masked_DualAtt_NetVarGlobal(
+            pretrained=True, 
         ).to(self.device)
 
         if 'resume_from' in self.cfg and self.cfg['resume_from'] is not None:
