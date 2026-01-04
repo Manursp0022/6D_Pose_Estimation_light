@@ -124,7 +124,7 @@ class PoseNetTrainerRefined:
         with torch.no_grad():
             for batch in tqdm(self.val_loader, desc="Validation"):
                 images = batch['image'].to(self.device)
-                bboxes = batch['bbox'].to(self.device)
+                bboxes = batch['bbox_norm'].to(self.device)
                 intrinsics = batch['cam_params'].to(self.device)
                 gt_translation = batch['translation'].to(self.device)
                 gt_quats = batch['quaternion'].to(self.device)
