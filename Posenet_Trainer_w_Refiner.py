@@ -63,7 +63,10 @@ class PoseNetTrainerRefined:
     def _setup_model(self):
         model = PoseResNet(pretrained=True).to(self.device)
         refiner = PinholeRefineNet().to(self.device)
-        optimizer = optim.Adam(model.parameters(), lr=self.cfg['lr'])
+        optimizer = optim.Adam(
+        list(model.parameters()) + list(refiner.parameters()), 
+        lr=self.cfg['lr']
+        )
         scheduler = optim.lr_scheduler.ReduceLROnPlateau(
             optimizer, mode='min', factor=0.5, patience=self.cfg['scheduler_patience']
         )
