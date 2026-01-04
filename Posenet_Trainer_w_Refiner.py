@@ -85,7 +85,7 @@ class PoseNetTrainerRefined:
         
         for batch in progress_bar:
             images = batch['image'].to(self.device)
-            bboxes = batch['bbox'].to(self.device)
+            bboxes = batch['bbox_norm'].to(self.device)
             intrinsics = batch['cam_params'].to(self.device)
             gt_translation = batch['translation'].to(self.device)
             gt_quaternion = batch['quaternion'].to(self.device)
@@ -187,3 +187,20 @@ class PoseNetTrainerRefined:
         plt.title(f"Training Results (LR={self.cfg['lr']})")
         plt.savefig(os.path.join(self.save_dir, "training_curve.png"))
         plt.show()
+if __name__ == "__main__":
+    config = {
+        'split_train': 'data/autosplit_train_ALL.txt',
+        'split_val': 'data/autosplit_val_ALL.txt',
+        'dataset_root': 'dataset/Linemod_preprocessed',
+        'batch_size': 16,
+        'lr': 0.001,
+        'epochs': 50,
+        'alpha': 1.0,
+        'beta': 0.1,
+        'scheduler_patience': 5,
+        'early_stop_patience': 10,
+        'save_dir': 'checkpoints/'
+    }
+    
+    trainer = PoseNetTrainerRefined(config)
+    trainer.run()

@@ -33,6 +33,7 @@ class LineModPoseDataset(Dataset):
         for img_path_abs in tqdm(image_paths_raw):
             # Parsing del path
             parts = img_path_abs.split(os.sep)
+            #print(parts)
             # Assumiamo struttura: .../data/{folder_id}/rgb/{filename}
             # Se il path nel txt è relativo o diverso, aggiusta questi indici!
             folder_id = parts[-3] 

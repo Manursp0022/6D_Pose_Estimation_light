@@ -6,9 +6,9 @@ class PinholeRefineNet(nn.Module):
     def __init__(self):
         super(PinholeRefineNet, self).__init__()
         
-        # Branch per coordinate e intrinseche (9 parametri + 3 coordinate)
+        # Branch per coordinate e intrinseche (4 parametri + 3 coordinate)
         self.geo_feat = nn.Sequential(
-            nn.Linear(12, 64),
+            nn.Linear(7, 64),
             nn.ReLU(),
             nn.Linear(64, 64)
         )
@@ -29,8 +29,14 @@ class PinholeRefineNet(nn.Module):
         )
 
     def forward(self, pinhole_xyz, intrinsics, bbox):
-        # Flatten delle intrinseche e concatenazione
-        geo_input = torch.cat([pinhole_xyz, intrinsics.view(-1, 9)], dim=1)
+        # Flattening intrinsics and concatenation (16,4) intrinsics
+        fx = intrinsics[:, 0].unsqueeze(1)  # Primo valore
+        fy = intrinsics[:, 1].unsqueeze(1)  # Secondo valore
+        cx = intrinsics[:, 2].unsqueeze(1)  # Terzo valore
+        cy = intrinsics[:, 3].unsqueeze(1)  # Quarto valore
+
+        #print(fx)
+        geo_input = torch.cat([pinhole_xyz, fx, fy, cx, cy], dim=1)
         
         f_geo = self.geo_feat(geo_input)
         f_bbox = self.bbox_feat(bbox)
