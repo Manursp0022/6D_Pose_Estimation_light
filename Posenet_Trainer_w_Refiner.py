@@ -8,7 +8,7 @@ from torch.utils.data import DataLoader
 
 from utils.Posenet_utils.posenet_dataset_ALL import LineModPoseDataset
 from utils.Posenet_utils.utils_geometric import solve_pinhole_diameter
-from Refinement_Section.Pinhole_Refinement import PinholeRefineNet
+from Refinement_Section.Pinhole_Refinement import TinyPinholeRefiner
 from models.Posenet import PoseResNet
 from utils.Posenet_utils.quaternion_Loss import QuaternionLoss
 
@@ -62,11 +62,11 @@ class PoseNetTrainerRefined:
 
     def _setup_model(self):
         model = PoseResNet(pretrained=True).to(self.device)
-        refiner = PinholeRefineNet().to(self.device)
-        optimizer = optim.Adam(
-        list(model.parameters()) + list(refiner.parameters()), 
-        lr=self.cfg['lr']
-        )
+        refiner = TinyPinholeRefiner(num_classes=13).to(self.device)
+        optimizer = optim.Adam([
+        {'params': model.parameters(), 'lr': self.cfg['lr']},
+        {'params': refiner.parameters(), 'lr': self.cfg['lr'] * 0.1}  # 10x slower
+        ])
         scheduler = optim.lr_scheduler.ReduceLROnPlateau(
             optimizer, mode='min', factor=0.5, patience=self.cfg['scheduler_patience']
         )
@@ -92,14 +92,18 @@ class PoseNetTrainerRefined:
             intrinsics = batch['cam_params'].to(self.device)
             gt_translation = batch['translation'].to(self.device)
             gt_quaternion = batch['quaternion'].to(self.device)
-            class_ids = batch['class_id']
+            class_ids = batch['class_id'].to(self.device)
 
             self.optimizer.zero_grad()
 
             # Translation (Refined Pinhole - Yes Gradient)
             diameters = self._get_diameters_tensor(class_ids)
             pred_translation = solve_pinhole_diameter(bboxes, intrinsics, diameters)
-            pred_translation = self.refiner(pred_translation, intrinsics, bboxes)
+            print("Class IDs:", class_ids)
+            print("Min:", class_ids.min(), "Max:", class_ids.max())
+            pred_translation = self.refiner(pred_translation, bboxes, class_ids)
+            """print("Refined Translation:", pred_translation)
+            print("Ground Truth Translation:", gt_translation)"""
             loss_t = self.criterion_trans(pred_translation, gt_translation)
 
             #  Rotation (ResNet - Yes Gradient)
@@ -114,7 +118,8 @@ class PoseNetTrainerRefined:
 
             running_loss += total_loss.item()
             progress_bar.set_postfix({'T_loss': loss_t.item(), 'R_loss': loss_r.item()})
-            
+        
+        #print(f"Epoch {epoch+1}: Train Loss: {train_loss:.4f} (T: {loss_t.item():.4f}, R: {loss_r.item():.4f}) | Val Loss: {val_loss:.4f}")
         return running_loss / len(self.train_loader)
 
     def validate(self):
@@ -128,12 +133,14 @@ class PoseNetTrainerRefined:
                 intrinsics = batch['cam_params'].to(self.device)
                 gt_translation = batch['translation'].to(self.device)
                 gt_quats = batch['quaternion'].to(self.device)
-                class_ids = batch['class_id']
+                class_ids = batch['class_id'].to(self.device)
 
                 # Translation
                 diameters = self._get_diameters_tensor(class_ids)
                 pred_translation = solve_pinhole_diameter(bboxes, intrinsics, diameters)
-                pred_translation = self.refiner(pred_translation, intrinsics, bboxes)
+                pred_translation = self.refiner(pred_translation, bboxes, class_ids)
+                #print("Refined Translation:", pred_translation)
+                #print("Ground Truth Translation:", gt_translation)
                 loss_t = self.criterion_trans(pred_translation, gt_translation)
 
                 # Rotation
@@ -141,6 +148,7 @@ class PoseNetTrainerRefined:
                 loss_r = self.criterion_rot(pred_quats, gt_quats)
 
                 total_loss = (self.cfg['alpha'] * loss_t) + (self.cfg['beta'] * loss_r)
+                
                 running_val_loss += total_loss.item()
                 
         return running_val_loss / len(self.val_loader)

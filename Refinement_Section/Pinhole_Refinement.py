@@ -2,48 +2,41 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-class PinholeRefineNet(nn.Module):
-    def __init__(self):
-        super(PinholeRefineNet, self).__init__()
+class TinyPinholeRefiner(nn.Module):
+    def __init__(self, num_classes=13):
+        super().__init__()
         
-        # Branch per coordinate e intrinseche (4 parametri + 3 coordinate)
-        self.geo_feat = nn.Sequential(
-            nn.Linear(7, 64),
+        
+        self.class_bias = nn.Embedding(16, 3)  # Per-class bias
+        nn.init.zeros_(self.class_bias.weight)  # Start from zero correction
+        
+        # Tiny MLP for bbox + pinhole features
+        self.refiner = nn.Sequential(
+            nn.Linear(7, 32),  # 3 (xyz) + 4 (bbox)
             nn.ReLU(),
-            nn.Linear(64, 64)
+            nn.Linear(32, 16),
+            nn.ReLU(),
+            nn.Linear(16, 3)
         )
         
-        # Branch per Bounding Box (4 parametri: x1, y1, x2, y2)
-        self.bbox_feat = nn.Sequential(
-            nn.Linear(4, 32),
-            nn.ReLU(),
-            nn.Linear(32, 64)
-        )
-        
-        # Testa di regressione finale
-        self.regressor = nn.Sequential(
-            nn.Linear(128, 128),
-            nn.ReLU(),
-            nn.Dropout(0.2),
-            nn.Linear(128, 3) # Output: Delta X, Delta Y, Delta Z
-        )
+        # Output constraint (CRITICAL!)
+        self.max_delta = 0.15  # Max ±15cm correction
 
-    def forward(self, pinhole_xyz, intrinsics, bbox):
-        # Flattening intrinsics and concatenation (16,4) intrinsics
-        fx = intrinsics[:, 0].unsqueeze(1)  # Primo valore
-        fy = intrinsics[:, 1].unsqueeze(1)  # Secondo valore
-        cx = intrinsics[:, 2].unsqueeze(1)  # Terzo valore
-        cy = intrinsics[:, 3].unsqueeze(1)  # Quarto valore
-
-        #print(fx)
-        geo_input = torch.cat([pinhole_xyz, fx, fy, cx, cy], dim=1)
+    def forward(self, pinhole_xyz, bbox, class_ids):
+        # Normalize inputs (IMPORTANT!)
+        xyz_norm = pinhole_xyz / torch.tensor([1.0, 1.0, 1.0]).to(pinhole_xyz.device)
         
-        f_geo = self.geo_feat(geo_input)
-        f_bbox = self.bbox_feat(bbox)
+        # Concatenate features
+        features = torch.cat([xyz_norm, bbox], dim=1)
         
-        combined = torch.cat([f_geo, f_bbox], dim=1)
-        delta_xyz = self.regressor(combined)
+        # Predict delta
+        delta = self.refiner(features)
         
-        # Correzione finale
-        refined_xyz = pinhole_xyz + delta_xyz
-        return refined_xyz
+        # Add class-specific bias
+        class_correction = self.class_bias(class_ids)
+        delta = delta + class_correction
+        
+        # Constrain to reasonable range
+        delta = torch.tanh(delta) * self.max_delta
+        
+        return pinhole_xyz + delta

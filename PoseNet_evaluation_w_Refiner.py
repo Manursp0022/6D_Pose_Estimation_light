@@ -47,6 +47,7 @@ class PoseNetEvaluator:
 
         self.val_loader = self._setup_data()
         self.Resnet = self._setup_Resnet()
+        self.refiner = self._setup_Refiner()
         self.YOLO = self._setup_YOLO()
         self.models_3d = self._load_3d_models()
         
@@ -73,6 +74,20 @@ class PoseNetEvaluator:
         model.eval()
         print("   -> Weights loaded successfully.")
         return model
+    
+    def _setup_Refiner(self):
+        print(" Loading Pinhole Refiner Model...")
+        from Refinement_Section.Pinhole_Refinement import PinholeRefineNet
+        refiner = PinholeRefineNet().to(self.device)
+        
+        weights_path = os.path.join(self.cfg['model_dir'], 'best_pinhole_refiner.pth')
+        if not os.path.exists(weights_path):
+            raise FileNotFoundError(f" Refiner Weights not found at: {weights_path}")
+        
+        refiner.load_state_dict(torch.load(weights_path, map_location=self.device))
+        refiner.eval()
+        print("   -> Weights loaded successfully.")
+        return refiner
 
     def _setup_YOLO(self):
         print("Loading YOLO model....")
@@ -209,7 +224,7 @@ class PoseNetEvaluator:
                 #creating tensors only with found objects
                 pred_bboxes_tensor = torch.stack(pred_bboxes_list).to(self.device)
                 resnet_batch = torch.stack(resnet_input_list).to(self.device)
-                
+                #refiner_batch = 
                 # Filtriamo le Ground Truth corrispondenti agli oggetti trovati
                 # (Dobbiamo confrontare solo quelli che YOLO ha visto)
                 subset_intrinsics = intrinsics[valid_indices]
@@ -220,15 +235,18 @@ class PoseNetEvaluator:
                 # Pinhole 
                 current_diameters = [self.DRS[cid] / 1000.0 for cid in subset_class_ids]
                 diam_tensor = torch.tensor(current_diameters, dtype=torch.float32).to(self.device)
-                
                 pred_trans = solve_pinhole_diameter(pred_bboxes_tensor, subset_intrinsics, diam_tensor)
-
+                print( pred_trans)
+                pred_trans = self.refiner(pred_trans, pred_bboxes_tensor)
+                print(pred_trans)
+                print("----")
                 pred_quats = self.Resnet(resnet_batch)
 
                 # Calculate Metrics (CPU side)
                 pred_trans_np = pred_trans.cpu().numpy()
                 #Using subset (Important: covering the case in which YOLO finds nothing in some images)
                 gt_trans_np = subset_gt_trans.cpu().numpy() 
+                print(gt_trans_np)
                 pred_R_np = self._quaternion_to_matrix(pred_quats)
                 gt_R_np = self._quaternion_to_matrix(subset_gt_quats)
 
@@ -375,7 +393,6 @@ class PoseNetEvaluator:
         plt.savefig(save_path)
         print(f"📈 Plot saved to: {save_path}")
         plt.show()
-
 if __name__ == "__main__":
     # Example configuration dictionary
     config = {
@@ -383,10 +400,8 @@ if __name__ == "__main__":
         'dataset_root': 'dataset/Linemod_preprocessed',
         'model_dir': 'checkpoints/',
         'batch_size': 16,
-        'save_dir': 'evaluation_results/'
+        'save_dir': 'checkpoints_results/'
     }
-
-    os.makedirs(config['save_dir'], exist_ok=True)
 
     evaluator = PoseNetEvaluator(config)
     evaluator.run()

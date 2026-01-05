@@ -32,10 +32,12 @@ class LineModPoseDataset(Dataset):
 
         for img_path_abs in tqdm(image_paths_raw):
             # Parsing del path
-            parts = img_path_abs.split(os.sep)
+            parts = img_path_abs.split("/")
             #print(parts)
             # Assumiamo struttura: .../data/{folder_id}/rgb/{filename}
             # Se il path nel txt è relativo o diverso, aggiusta questi indici!
+
+            #print(parts)
             folder_id = parts[-3] 
             img_name = parts[-1]
             img_id_num = int(img_name.replace('.png', '')) 
@@ -157,7 +159,13 @@ class LineModPoseDataset(Dataset):
         
         # 3. LOAD MASK (Nuovo!)
         # Le maschere Linemod sono di solito 0=sfondo, 255=oggetto
-        mask = cv2.imread(sample['mask_path'], cv2.IMREAD_GRAYSCALE)
+        if not os.path.exists(sample['mask_path']):
+            print(f"Warning: Mask not found: {sample['mask_path']}")
+            # Return a blank mask or skip this sample
+            mask = np.zeros((480, 640), dtype=np.uint8)  # Adjust dimensions as needed
+        else:
+            mask = cv2.imread(sample['mask_path'], cv2.IMREAD_GRAYSCALE)
+        
         if mask is None: 
             # Fallback: se manca la maschera, assumiamo tutto oggetto (rischioso ma evita crash)
             # oppure tutto nero. Meglio tutto 1 per non azzerare l'input.
