@@ -99,8 +99,6 @@ class PoseNetTrainerRefined:
             # Translation (Refined Pinhole - Yes Gradient)
             diameters = self._get_diameters_tensor(class_ids)
             pred_translation = solve_pinhole_diameter(bboxes, intrinsics, diameters)
-            print("Class IDs:", class_ids)
-            print("Min:", class_ids.min(), "Max:", class_ids.max())
             pred_translation = self.refiner(pred_translation, bboxes, class_ids)
             """print("Refined Translation:", pred_translation)
             print("Ground Truth Translation:", gt_translation)"""
