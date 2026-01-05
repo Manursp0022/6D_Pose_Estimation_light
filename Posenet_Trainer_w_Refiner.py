@@ -100,8 +100,7 @@ class PoseNetTrainerRefined:
             diameters = self._get_diameters_tensor(class_ids)
             pred_translation = solve_pinhole_diameter(bboxes, intrinsics, diameters)
             pred_translation = self.refiner(pred_translation, bboxes, class_ids)
-            """print("Refined Translation:", pred_translation)
-            print("Ground Truth Translation:", gt_translation)"""
+            
             loss_t = self.criterion_trans(pred_translation, gt_translation)
 
             #  Rotation (ResNet - Yes Gradient)

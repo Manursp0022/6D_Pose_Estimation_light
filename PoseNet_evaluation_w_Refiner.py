@@ -11,6 +11,7 @@ from plyfile import PlyData
 from scipy.spatial.transform import Rotation as R
 from ultralytics import YOLO
 from models.Posenet import PoseResNet
+from Refinement_Section.Pinhole_Refinement import TinyPinholeRefiner as PinholeRefineNet
 from utils.Posenet_utils.posenet_dataset_ALL import LineModPoseDataset
 from utils.Posenet_utils.utils_geometric import solve_pinhole_diameter
 from utils.Posenet_utils.PoseEvaluator import PoseEvaluator 
@@ -77,7 +78,7 @@ class PoseNetEvaluator:
     
     def _setup_Refiner(self):
         print(" Loading Pinhole Refiner Model...")
-        from Refinement_Section.Pinhole_Refinement import PinholeRefineNet
+        
         refiner = PinholeRefineNet().to(self.device)
         
         weights_path = os.path.join(self.cfg['model_dir'], 'best_pinhole_refiner.pth')
