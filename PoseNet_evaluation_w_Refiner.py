@@ -236,17 +236,16 @@ class PoseNetEvaluator:
                 current_diameters = [self.DRS[cid] / 1000.0 for cid in subset_class_ids]
                 diam_tensor = torch.tensor(current_diameters, dtype=torch.float32).to(self.device)
                 pred_trans = solve_pinhole_diameter(pred_bboxes_tensor, subset_intrinsics, diam_tensor)
-                print( pred_trans)
+               
                 pred_trans = self.refiner(pred_trans, pred_bboxes_tensor)
-                print(pred_trans)
-                print("----")
+               
                 pred_quats = self.Resnet(resnet_batch)
 
                 # Calculate Metrics (CPU side)
                 pred_trans_np = pred_trans.cpu().numpy()
                 #Using subset (Important: covering the case in which YOLO finds nothing in some images)
                 gt_trans_np = subset_gt_trans.cpu().numpy() 
-                print(gt_trans_np)
+                
                 pred_R_np = self._quaternion_to_matrix(pred_quats)
                 gt_R_np = self._quaternion_to_matrix(subset_gt_quats)
 
