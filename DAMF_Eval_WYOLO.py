@@ -50,12 +50,25 @@ class DAMF_Evaluator:
         }
 
         # Setup
+        self.yolo_model = self._setup_yolo()
         self.val_loader = self._setup_data()
         self.models_3d = self._load_3d_models()
         self.model = self._setup_model()
         
         # Metric calculator (la camera intrinsics non serve per ADD, solo per PnP)
         self.metric_calculator = PoseEvaluator(np.eye(3))
+
+    def _setup_yolo(self):
+        """Carica il modello YOLO per segmentazione."""
+        print("🔍 Loading YOLO Segmentation Model...")
+        
+        yolo_path = self.cfg['yolo_model_path']
+        if not os.path.exists(yolo_path):
+            raise FileNotFoundError(f"❌ YOLO model not found at: {yolo_path}")
+        
+        model = YOLO(yolo_path)
+        print(f"   ✓ Loaded YOLO from: {yolo_path}")
+        return model
 
     def _get_device(self):
         """Selezione automatica del device migliore disponibile."""
@@ -107,16 +120,14 @@ class DAMF_Evaluator:
         """Carica il modello DAMF_Net con i pesi addestrati."""
         print("🧠 Loading Masked_DualAtt_Net model...")
         
-        model = DenseFusion_Masked_DualAtt_NetVar(
+        model = DenseFusion_Masked_DualAtt_NetVarWRef(
             pretrained=False,  # Non servono pesi ImageNet, carichiamo i tuoi
             temperature=self.cfg.get('temperature', 2.0)
         ).to(self.device)
         
         #weights_path = os.path.join(self.cfg['model_dir'], 'DenseFusion_Masked_DualAttNet_Hard1cm.pth')
         #weights_path = os.path.join(self.cfg['model_dir'], 'DenseFusion_Masked_DualAtt_NetVar_Dropout.pth')
-        #weights_path = os.path.join(self.cfg['model_dir'], 'DenseFusion_Masked_DualAtt_NetVarRefinerHard.pth')
-        weights_path = os.path.join(self.cfg['model_dir'], 'DenseFusion_Masked_DualAtt_NetVar_WOAttention.pth')
-
+        weights_path = os.path.join(self.cfg['model_dir'], 'DenseFusion_Masked_DualAtt_NetVarRefinerHard.pth')
         """
         model = DAMF_Net(
             pretrained=False,  # Non servono pesi ImageNet, carichiamo i tuoi
@@ -210,6 +221,60 @@ class DAMF_Evaluator:
         
         return R.from_quat(quats_scipy).as_matrix()
 
+    
+    def _run_yolo_inference(self, rgb_image):
+        """
+        Esegue YOLO sull'immagine RGB e restituisce mask e bbox.
+        
+        Args:
+            rgb_image: numpy array [H, W, 3] in RGB
+            
+        Returns:
+            detections: lista di dict con 'class_id', 'bbox', 'mask', 'confidence'
+        """
+        # YOLO vuole BGR
+        bgr_image = cv2.cvtColor(rgb_image, cv2.COLOR_RGB2BGR)
+        
+        # Inference
+        results = self.yolo_model(bgr_image, verbose=False)[0]
+        
+        detections = []
+        
+        if results.masks is None:
+            return detections
+        
+        masks = results.masks.data.cpu().numpy()  # [N, H, W]
+        boxes = results.boxes
+        
+        for i in range(len(boxes)):
+            yolo_class = int(boxes.cls[i].item())
+            conf = float(boxes.conf[i].item())
+            
+            # Converti class YOLO -> LineMOD obj_id
+            if yolo_class not in self.YOLO_TO_LINEMOD:
+                continue
+            
+            linemod_id = self.YOLO_TO_LINEMOD[yolo_class]
+            
+            # Bbox in formato [x, y, w, h]
+            xyxy = boxes.xyxy[i].cpu().numpy()
+            x1, y1, x2, y2 = xyxy
+            bbox = [x1, y1, x2 - x1, y2 - y1]  # [x, y, w, h]
+            
+            # Mask - resize alla dimensione originale se necessario
+            mask = masks[i]
+            if mask.shape[0] != self.img_h or mask.shape[1] != self.img_w:
+                mask = cv2.resize(mask, (self.img_w, self.img_h), interpolation=cv2.INTER_NEAREST)
+            
+            detections.append({
+                'obj_id': linemod_id,
+                'bbox': bbox,
+                'mask': (mask > 0.5).astype(np.uint8) * 255,
+                'confidence': conf
+            })
+        
+        return detections
+
     def run(self):
         """
         Esegue la valutazione completa sul validation set.
@@ -250,8 +315,9 @@ class DAMF_Evaluator:
                 
                 # Estrai dati dal batch
                 rgb_batch = batch['image'].to(self.device)
-                depth_batch = batch['depth'].to(self.device)
                 mask_batch = batch['mask'].to(self.device)
+
+                depth_batch = batch['depth'].to(self.device)
                 cam_params = batch['cam_params'].to(self.device, non_blocking=True)
                 bb_info = batch['bbox_norm'].to(self.device, non_blocking=True)
                 gt_translation = batch['translation'].cpu().numpy()  # [B, 3]

@@ -56,10 +56,11 @@ class DAMFTurboTrainerA100:
             print(f"🔄 FINE-TUNING MODE: Loading weights from {self.cfg['resume_from']}")
             if os.path.exists(self.cfg['resume_from']):
                 checkpoint = torch.load(self.cfg['resume_from'], map_location=self.device)
+                state_dict = self._remove_compile_prefix(checkpoint['model_state_dict'])
                 
                 # Carichiamo solo i pesi del modello
                 # (Ignoriamo optimizer e epoch perché stiamo iniziando un nuovo stage con LR diverso)
-                self.model.load_state_dict(checkpoint['model_state_dict'])
+                self.model.load_state_dict(state_dict)
                 print("✅ Weights loaded successfully!")
             else:
                 raise FileNotFoundError(f"Checkpoint not found at {self.cfg['resume_from']}")
@@ -126,6 +127,24 @@ class DAMFTurboTrainerA100:
         else:
             print("⚠️  Using CPU (slower)")
             return torch.device("cpu")
+    
+    def _remove_compile_prefix(self, state_dict):
+        """
+        Rimuove il prefisso '_orig_mod.' dai pesi salvati con torch.compile().
+        
+        Args:
+            state_dict: State dict con o senza prefisso
+            
+        Returns:
+            State dict pulito senza prefisso
+        """
+        new_state_dict = {}
+        for key, value in state_dict.items():
+            # Rimuovi il prefisso '_orig_mod.' se presente
+            new_key = key.replace('_orig_mod.', '') if key.startswith('_orig_mod.') else key
+            new_state_dict[new_key] = value
+        return new_state_dict
+
 
     def _setup_separate_optimizer(self):
         """
