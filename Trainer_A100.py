@@ -15,8 +15,10 @@ from utils.Posenet_utils.posenet_dataset_AltMasked import LineModPoseDataset_Alt
 from utils.Posenet_utils.DenseFusion_Loss_log import DenseFusionLoss
 
 from models.DFMasked_DualAtt_Net import DenseFusion_Masked_DualAtt_Net
+
 from models.DFMasked_DualAtt_NetVar import DenseFusion_Masked_DualAtt_NetVar
 from models.DFMasked_DualAtt_NetVarGlobal import DenseFusion_Masked_DualAtt_NetVarGlobal
+
 from models.DFMasked_DualAtt_NetVar_Weighted_WRefiner import DenseFusion_Masked_DualAtt_NetVarWRef
 from models.DFMasked_DualAtt_NetVarGlobal_WRefiner import DenseFusion_Masked_DualAtt_NetVarGlobal_WRef
 
@@ -31,14 +33,11 @@ class DAMFTurboTrainerA100:
         # MIXED PRECISION SCALER ---
         self.scaler = torch.cuda.amp.GradScaler()
 
-        """
         print("Initializing  DenseFusion_Masked_DualAtt_NetVar (A100 Optimized)...")
         self.model = DenseFusion_Masked_DualAtt_NetVar(
             pretrained=True, 
             temperature=self.cfg['temperature']
         ).to(self.device)
-        """
-        print("Initializing  DenseFusion_Masked_DualAtt_NetVarWRefr (A100 Optimized)...")
 
         """
         self.model = DenseFusion_Masked_DualAtt_NetVarGlobal(
@@ -46,11 +45,12 @@ class DAMFTurboTrainerA100:
         ).to(self.device)
         """
 
-        self.model = DenseFusion_Masked_DualAtt_NetVarWRefr(
+        """
+        self.model = DenseFusion_Masked_DualAtt_NetVarWRef(
             pretrained=True, 
             temperature=self.cfg['temperature']
         ).to(self.device)
-
+        """
 
         if 'resume_from' in self.cfg and self.cfg['resume_from'] is not None:
             print(f"🔄 FINE-TUNING MODE: Loading weights from {self.cfg['resume_from']}")
@@ -363,7 +363,7 @@ class DAMFTurboTrainerA100:
                 self.best_val_loss = val_loss
                 early_stop_counter = 0
                 
-                path = os.path.join(self.cfg['save_dir'], 'DenseFusion_Masked_DualAtt_NetVar.pth')
+                path = os.path.join(self.cfg['save_dir'], 'DenseFusion_Masked_DualAtt_NetVar_WOAttention.pth')
                 torch.save({
                     'epoch': epoch,
                     'model_state_dict': self.model.state_dict(),
