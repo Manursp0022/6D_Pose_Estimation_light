@@ -67,7 +67,7 @@ class DenseFusion_Masked_DualAtt_NetVarGlobal_WRef(nn.Module):
         depth_3ch = torch.cat([depth, depth, depth], dim=1)
         depth_feat = self.depth_extractor(depth_3ch) 
 
-        #Adding this to avoid overfitting on hard versione
+        #Adding this to avoid overfitting on hard version
         rgb_feat = self.feat_dropout(rgb_feat)
         depth_feat = self.feat_dropout(depth_feat)
         
@@ -96,7 +96,6 @@ class DenseFusion_Masked_DualAtt_NetVarGlobal_WRef(nn.Module):
         return fused_feat, rgb_enhanced, depth_enhanced, debug_info
 
     def _global_pooling(self, fused_feat, batch_size, rgb_enhanced, depth_enhanced, bb_info,cam_params,return_debug=False, debug_info=None):
-
         rot_input = torch.cat([fused_feat, rgb_enhanced], dim=1)
         pred_rot_map = self.rot_head(rot_input)     # [B, 4, 7, 7]
 

@@ -4,19 +4,17 @@ import os
 import re
 import torch
 from DAMF_Eval import DAMF_Evaluator
-from Refinement_Section.evaluate_with_ICP import ICPEvaluator
 from PoseNet_evaluation import PoseNetEvaluator
 from Trainer_A100 import DAMFTurboTrainerA100
 
 if __name__ == "__main__":
-
     config = {
         # Percorsi
         'dataset_root': "/Users/emanuelerosapepe/Desktop/test_YOLO/Linemod_preprocessed",  # MODIFICA QUESTO
         'split_val': "data/autosplit_val_ALL.txt",  # MODIFICA QUESTO
         'model_dir': 'checkpoints/',  # Directory con best_DAMF.pth
         'save_dir': 'checkpoints_results/',
-        'training_mode': 'easy',
+        'training_mode': 'hard',
         'model_old': False,
         'batch_size': 32,
         'num_workers': 12,  
@@ -30,7 +28,6 @@ if __name__ == "__main__":
     print("\n✅ Evaluation completed!")
     print(f"Final Accuracy: {results['accuracy']:.2f}%")
     print(f"Mean ADD: {results['mean_add_cm']:.2f} cm")
-
     """
     config = {
         # Percorsi
