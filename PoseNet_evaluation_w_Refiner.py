@@ -11,7 +11,7 @@ from plyfile import PlyData
 from scipy.spatial.transform import Rotation as R
 from ultralytics import YOLO
 from models.Posenet import PoseResNet
-from Refinement_Section.Pinhole_Refinement import TinyPinholeRefiner as PinholeRefineNet
+from Refinement_Section.Pinhole_Refinement import ImageBasedTranslationNet as PinholeRefineNet
 from utils.Posenet_utils.posenet_dataset_ALL import LineModPoseDataset
 from utils.Posenet_utils.utils_geometric import solve_pinhole_diameter
 from utils.Posenet_utils.PoseEvaluator import PoseEvaluator 
@@ -164,6 +164,7 @@ class PoseNetEvaluator:
             for batch in tqdm(self.val_loader, desc="Evaluating"):
                 # Dati Ground Truth
                 paths = batch['path']
+                images = batch['image'].to(self.device)
                 # = batch['bbox'].to(self.device)
                 intrinsics = batch['cam_params'].to(self.device)
                 gt_translation = batch['translation'].to(self.device)
@@ -228,6 +229,7 @@ class PoseNetEvaluator:
                 #refiner_batch = 
                 # Filtriamo le Ground Truth corrispondenti agli oggetti trovati
                 # (Dobbiamo confrontare solo quelli che YOLO ha visto)
+                subset_imgs = images[valid_indices]
                 subset_intrinsics = intrinsics[valid_indices]
                 subset_gt_trans = gt_translation[valid_indices]
                 subset_gt_quats = gt_quats[valid_indices]
@@ -237,8 +239,8 @@ class PoseNetEvaluator:
                 current_diameters = [self.DRS[cid] / 1000.0 for cid in subset_class_ids]
                 diam_tensor = torch.tensor(current_diameters, dtype=torch.float32).to(self.device)
                 pred_trans = solve_pinhole_diameter(pred_bboxes_tensor, subset_intrinsics, diam_tensor)
-               
-                pred_trans = self.refiner(pred_trans, pred_bboxes_tensor)
+                pinhole_xy = pred_trans[:, :2]
+                pred_trans = self.refiner(subset_imgs, pred_bboxes_tensor, pinhole_xy)
                
                 pred_quats = self.Resnet(resnet_batch)
 
@@ -278,7 +280,7 @@ class PoseNetEvaluator:
                     
                     # Check Correctness (Threshold: 10% of diameter)
                     diameter_m = self.DRS[obj_id] / 1000.0
-                    threshold = 0.5 * diameter_m
+                    threshold = 0.1 * diameter_m
                     
                     is_correct = self.metric_calculator.is_pose_correct(add_error_m, threshold)
                     
@@ -360,7 +362,7 @@ class PoseNetEvaluator:
         # --- PLOT 1: Accuracy (%) ---
         bars = ax1.bar(labels, accuracies, color='skyblue', edgecolor='black')
         ax1.set_ylabel('Accuracy (% of Pass)')
-        ax1.set_title('Per-Class Accuracy (ADD < 0.5 Diameter)')
+        ax1.set_title('Per-Class Accuracy (ADD < 0.1 Diameter)')
         ax1.set_ylim(0, 100)
         ax1.grid(axis='y', linestyle='--', alpha=0.7)
         

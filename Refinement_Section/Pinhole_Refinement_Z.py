@@ -29,9 +29,9 @@ class ImageBasedTranslationNet(nn.Module):
         for param in list(self.feature_extractor.parameters())[:20]:
             param.requires_grad = False
         
-        # Geometric encoder: bbox (4) + pinhole X,Y (2) + intrinsics (4) = 10 dims
+        # Geometric encoder: bbox (4) + intrinsics (4) = 8 dims
         self.geo_encoder = nn.Sequential(
-            nn.Linear(10, 64),  # Changed from 4 to 10
+            nn.Linear(8, 64),  # Changed from 4 to 8
             nn.ReLU(),
             nn.Dropout(0.2),
             nn.Linear(64, 128),
@@ -48,18 +48,17 @@ class ImageBasedTranslationNet(nn.Module):
             nn.Dropout(0.2),
             nn.Linear(256, 128),
             nn.ReLU(),
-            nn.Linear(128, 3)  # Output: X, Y, Z
+            nn.Linear(128, 1)  # Output: Z
         )
         
-    def forward(self, image, bbox, pinhole_xy):
+    def forward(self, image, bbox):
         """
         Args:
             image: (B, 3, H, W) - RGB image
             bbox: (B, 4) - normalized bbox [x_center, y_center, width, height]
-            pinhole_xy: (B, 2) - X, Y from pinhole (we only use these as hints)
         
         Returns:
-            translation: (B, 3) - predicted X, Y, Z in meters
+            depth: (B, 1) - predicted Z in meters
         """
         batch_size = image.size(0)
         
@@ -70,13 +69,13 @@ class ImageBasedTranslationNet(nn.Module):
         visual_feat = self.feature_extractor(image)  # (B, 512, H', W')
         visual_feat = F.adaptive_avg_pool2d(visual_feat, 1)  # (B, 512, 1, 1)
         visual_feat = visual_feat.view(batch_size, -1)  # (B, 512)
-        
-        # Concatenate all geometric features: bbox (4) + pinhole_xy (2) + intrinsics (4) = 10
-        geo_input = torch.cat([bbox, pinhole_xy, intrinsics_batch], dim=1)  # (B, 10)
+
+        # Concatenate all geometric features: bbox (4) + intrinsics (4) = 8
+        geo_input = torch.cat([bbox, intrinsics_batch], dim=1)  # (B, 8)
         geo_feat = self.geo_encoder(geo_input)  # (B, 128)
         
         # Fuse visual and geometric features
         combined = torch.cat([visual_feat, geo_feat], dim=1)  # (B, 512 + 128)
-        translation = self.fusion(combined)  # (B, 3)
+        translation = self.fusion(combined)  # (B, 1)
         
         return translation

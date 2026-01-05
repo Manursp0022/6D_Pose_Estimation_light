@@ -104,6 +104,54 @@ def crop_square_resize(img, bbox, target_size=224, is_depth=False):
         
     return final_img
 
+def backproject_bbox_to_3d(bboxes, depths, fx, fy, cx, cy):
+    """
+    Back-project batch of 2D bounding boxes to 3D coordinates using pinhole camera model.
+    
+    Parameters:
+    -----------
+    bboxes : torch.Tensor
+        Bounding boxes with shape (B, 4) in format (x, y, w, h) where:
+        - x, y: bottom-left corner coordinates in image
+        - w, h: width and height of the bounding box
+    depths : torch.Tensor
+        Depths (Z distances) from camera to objects with shape (B,) or (B, 1)
+    fx : float or torch.Tensor
+        Focal length in x direction (pixels)
+    fy : float or torch.Tensor
+        Focal length in y direction (pixels)
+    cx : float or torch.Tensor
+        Principal point x-coordinate (pixels)
+    cy : float or torch.Tensor
+        Principal point y-coordinate (pixels)
+    
+    Returns:
+    --------
+    torch.Tensor : 3D coordinates with shape (B, 3) containing (X, Y, Z) for each box center
+    """
+    # Ensure depths has shape (B, 1) for broadcasting
+    if depths.dim() == 1:
+        depths = depths.unsqueeze(1)
+    
+    # Extract bounding box components
+    x = bboxes[:, 0:1]  # (B, 1)
+    y = bboxes[:, 1:2]  # (B, 1)
+    w = bboxes[:, 2:3]  # (B, 1)
+    h = bboxes[:, 3:4]  # (B, 1)
+    
+    # Calculate center of bounding boxes in image coordinates
+    center_u = x + w / 2.0  # (B, 1)
+    center_v = y + h / 2.0  # (B, 1)
+    
+    # Back-project to 3D
+    X = (center_u - cx) * depths / fx  # (B, 1)
+    Y = (center_v - cy) * depths / fy  # (B, 1)
+    Z = depths  # (B, 1)
+    
+    # Concatenate to form (B, 3) tensor
+    coords_3d = torch.cat([X, Y, Z], dim=1)  # (B, 3)
+    
+    return coords_3d
 
 def solve_pinhole_diameter(bboxes, intrinsics, diameters_batch):
     # Calculate diagonal pixels of the bbox

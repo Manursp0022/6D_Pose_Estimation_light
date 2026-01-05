@@ -7,8 +7,8 @@ from tqdm import tqdm
 from torch.utils.data import DataLoader
 
 from utils.Posenet_utils.posenet_dataset_ALL import LineModPoseDataset
-from utils.Posenet_utils.utils_geometric import solve_pinhole_diameter
-from Refinement_Section.Pinhole_Refinement import TinyPinholeRefiner
+from utils.Posenet_utils.utils_geometric import solve_pinhole_diameter, backproject_bbox_to_3d
+from Refinement_Section.Pinhole_Refinement_Z import ImageBasedTranslationNet as TinyPinholeRefiner
 from models.Posenet import PoseResNet
 from utils.Posenet_utils.quaternion_Loss import QuaternionLoss
 
@@ -36,7 +36,7 @@ class PoseNetTrainerRefined:
         self.criterion_rot = QuaternionLoss()
         
         # Metrics
-        self.history = {'train_loss': [], 'val_loss': []}
+        self.history = {'train_loss': [], 'val_loss': [], 'lr': []}
 
     def _get_device(self):
         if torch.backends.mps.is_available():
@@ -62,7 +62,7 @@ class PoseNetTrainerRefined:
 
     def _setup_model(self):
         model = PoseResNet(pretrained=True).to(self.device)
-        refiner = TinyPinholeRefiner(num_classes=13).to(self.device)
+        refiner = TinyPinholeRefiner().to(self.device)
         optimizer = optim.Adam([
         {'params': model.parameters(), 'lr': self.cfg['lr']},
         {'params': refiner.parameters(), 'lr': self.cfg['lr'] * 0.1}  # 10x slower
@@ -95,13 +95,15 @@ class PoseNetTrainerRefined:
             class_ids = batch['class_id'].to(self.device)
 
             self.optimizer.zero_grad()
-
+            fx, fy, cx, cy = intrinsics[:, 0], intrinsics[:, 2], intrinsics[:, 1], intrinsics[:, 3]
             # Translation (Refined Pinhole - Yes Gradient)
             diameters = self._get_diameters_tensor(class_ids)
-            pred_translation = solve_pinhole_diameter(bboxes, intrinsics, diameters)
-            pred_translation = self.refiner(pred_translation, bboxes, class_ids)
+
+            z_pred = self.refiner(images, bboxes)
+
+            pred_trans = backproject_bbox_to_3d(bboxes, z_pred, fx, fy, cx, cy)
             
-            loss_t = self.criterion_trans(pred_translation, gt_translation)
+            loss_t = self.criterion_trans(pred_trans, gt_translation, weight=torch.tensor([1.0, 1.0, 5.0], dtype=torch.float32).to(self.device))
 
             #  Rotation (ResNet - Yes Gradient)
             pred_quats = self.model(images)
@@ -133,12 +135,15 @@ class PoseNetTrainerRefined:
                 class_ids = batch['class_id'].to(self.device)
 
                 # Translation
-                diameters = self._get_diameters_tensor(class_ids)
-                pred_translation = solve_pinhole_diameter(bboxes, intrinsics, diameters)
-                pred_translation = self.refiner(pred_translation, bboxes, class_ids)
+                
+                fx, fy, cx, cy = intrinsics[:, 0], intrinsics[:, 2], intrinsics[:, 1], intrinsics[:, 3]
+
+                z_pred = self.refiner(images, bboxes)
+
+                pred_trans = backproject_bbox_to_3d(bboxes, z_pred, fx, fy, cx, cy)
                 #print("Refined Translation:", pred_translation)
                 #print("Ground Truth Translation:", gt_translation)
-                loss_t = self.criterion_trans(pred_translation, gt_translation)
+                loss_t = self.criterion_trans(pred_trans, gt_translation, weight=torch.tensor([1.0, 1.0, 5.0], dtype=torch.float32).to(self.device))
 
                 # Rotation
                 pred_quats = self.model(images)
@@ -155,24 +160,29 @@ class PoseNetTrainerRefined:
         best_val_loss = float('inf')
         early_stop_counter = 0
         best_model_state = None
-
+        resnet_lr = self.cfg['lr']
+        refiner_lr = self.cfg['lr'] * 0.1
         for epoch in range(self.cfg['epochs']):
             train_loss = self.train_epoch(epoch)
             val_loss = self.validate()
             
             self.history['train_loss'].append(train_loss)
             self.history['val_loss'].append(val_loss)
+            self.history['resnet_lr'].append(resnet_lr) 
+            self.history['refiner_lr'].append(refiner_lr)
 
             print(f"Epoch {epoch+1}: Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f}")
 
             self.scheduler.step(val_loss)
-
+            resnet_lr = self.optimizer.param_groups[0]['lr']
+            refiner_lr = self.optimizer.param_groups[1]['lr']
+            
             # Checkpoint & Early Stopping
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
                 best_model_state = copy.deepcopy(self.model.state_dict())
                 early_stop_counter = 0
-                torch.save(self.model.state_dict(), os.path.join(self.save_dir, 'best_posenet_baseline.pth'))
+                torch.save(self.model.state_dict(), os.path.join(self.save_dir, 'best_posenet_baseline_w_refiner.pth'))
                 torch.save(self.refiner.state_dict(), os.path.join(self.save_dir, 'best_pinhole_refiner.pth'))
                 print("----> New Best Model Saved! <----")
             else:
@@ -189,10 +199,12 @@ class PoseNetTrainerRefined:
         plt.figure(figsize=(10, 5))
         plt.plot(self.history['train_loss'], label='Train Loss')
         plt.plot(self.history['val_loss'], label='Val Loss')
+        plt.plot(self.history['resnet_lr'], label='ResNet Learning Rate')
+        plt.plot(self.history['refiner_lr'], label='Refiner Learning Rate')
         plt.xlabel('Epochs')
         plt.ylabel('Loss')
         plt.legend()
-        plt.title(f"Training Results (LR={self.cfg['lr']})")
+        plt.title(f"Training Results (rotation LR={self.cfg['lr']}, refiner LR={self.cfg['lr']*0.1})")
         plt.savefig(os.path.join(self.save_dir, "training_curve.png"))
         plt.show()
 if __name__ == "__main__":
