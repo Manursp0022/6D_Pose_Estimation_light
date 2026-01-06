@@ -6,6 +6,9 @@ from tqdm import tqdm
 from torch.utils.data import DataLoader
 from plyfile import PlyData
 from scipy.spatial.transform import Rotation as R
+import cv2
+from torchvision import transforms
+from ultralytics import YOLO
 #from models.DFMasked_DualAtt_NetVar_WRefiner import DenseFusion_Masked_DualAtt_NetVarWRef
 from models.DFMasked_DualAtt_Net import DenseFusion_Masked_DualAtt_Net
 from models.DFMasked_DualAtt_NetVar import DenseFusion_Masked_DualAtt_NetVar
@@ -17,8 +20,9 @@ from utils.Posenet_utils.posenet_dataset_ALL import LineModPoseDataset
 from utils.Posenet_utils.PoseEvaluator import PoseEvaluator 
 from utils.Posenet_utils.posenet_dataset_AltMasked import LineModPoseDataset_AltMasked
 from utils.Posenet_utils.posenet_dataset_ALLMasked import LineModPoseDatasetMasked
+from utils.Posenet_utils.utils_geometric import crop_square_resize
 
-class DAMF_Evaluator:
+class DAMF_Evaluator_WYolo:
     
     def __init__(self, config):
         self.cfg = config
@@ -49,6 +53,38 @@ class DAMF_Evaluator:
             12: "Holepuncher", 13: "Iron", 14: "Lamp", 15: "Phone"
         }
 
+        self.LINEMOD_TO_YOLO = {
+            1 : 0,   # Ape
+            2 : 1,   # Benchvise
+            4 : 2,   # Cam
+            5 : 3,   # Can
+            6 : 4,   # Cat
+            8 : 5,   # Driller
+            9 : 6,   # Duck
+            10 : 7,  # Eggbox
+            11 : 8,  # Glue
+            12 : 9,  # Holepuncher
+            13 : 10, # Iron
+            14 : 11, # Lamp
+            15 : 12  # Phone
+        }
+
+        # Camera intrinsics FISSE (LineMOD)
+        self.cam_params_norm = torch.tensor([
+            572.4114 / 640,   # fx_norm
+            573.57043 / 480,  # fy_norm
+            325.2611 / 640,   # cx_norm
+            242.04899 / 480   # cy_norm
+        ], dtype=torch.float32)
+
+        self.img_h, self.img_w = 480, 640
+        self.img_size = 224
+
+        self.transform = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        ])
+
         # Setup
         self.yolo_model = self._setup_yolo()
         self.val_loader = self._setup_data()
@@ -58,9 +94,11 @@ class DAMF_Evaluator:
         # Metric calculator (la camera intrinsics non serve per ADD, solo per PnP)
         self.metric_calculator = PoseEvaluator(np.eye(3))
 
+        self.YOLO_CONF = 0.5
+
     def _setup_yolo(self):
         """Carica il modello YOLO per segmentazione."""
-        print("🔍 Loading YOLO Segmentation Model...")
+        print("🔍 Loading yolov8n-seg:  Segmentation Model...")
         
         yolo_path = self.cfg['yolo_model_path']
         if not os.path.exists(yolo_path):
@@ -115,19 +153,21 @@ class DAMF_Evaluator:
         
         print(f"   ✓ Loaded {len(val_ds)} validation samples")
         return val_loader
+    
 
     def _setup_model(self):
         """Carica il modello DAMF_Net con i pesi addestrati."""
         print("🧠 Loading Masked_DualAtt_Net model...")
         
-        model = DenseFusion_Masked_DualAtt_NetVarWRef(
+        model = DenseFusion_Masked_DualAtt_NetVar(
             pretrained=False,  # Non servono pesi ImageNet, carichiamo i tuoi
             temperature=self.cfg.get('temperature', 2.0)
         ).to(self.device)
         
         #weights_path = os.path.join(self.cfg['model_dir'], 'DenseFusion_Masked_DualAttNet_Hard1cm.pth')
         #weights_path = os.path.join(self.cfg['model_dir'], 'DenseFusion_Masked_DualAtt_NetVar_Dropout.pth')
-        weights_path = os.path.join(self.cfg['model_dir'], 'DenseFusion_Masked_DualAtt_NetVarRefinerHard.pth')
+        #weights_path = os.path.join(self.cfg['model_dir'], 'DenseFusion_Masked_DualAtt_NetVarRefinerHard.pth')
+        weights_path = os.path.join(self.cfg['model_dir'], 'DenseFusion_Masked_DualAtt_NetVar_WOAttention.pth')
         """
         model = DAMF_Net(
             pretrained=False,  # Non servono pesi ImageNet, carichiamo i tuoi
@@ -220,60 +260,101 @@ class DAMF_Evaluator:
         quats_scipy = np.concatenate([quats[:, 1:], quats[:, 0:1]], axis=1)
         
         return R.from_quat(quats_scipy).as_matrix()
-
-    
-    def _run_yolo_inference(self, rgb_image):
-        """
-        Esegue YOLO sull'immagine RGB e restituisce mask e bbox.
         
-        Args:
-            rgb_image: numpy array [H, W, 3] in RGB
+    def _process_yolo_batch(self, rgb_paths, depth_paths, class_ids):
+            """
+            Processa un batch di immagini con YOLO.
+            Ritorna rgb, depth, mask, bbox tutti croppati e pronti, più gli indici validi.
             
-        Returns:
-            detections: lista di dict con 'class_id', 'bbox', 'mask', 'confidence'
-        """
-        # YOLO vuole BGR
-        bgr_image = cv2.cvtColor(rgb_image, cv2.COLOR_RGB2BGR)
-        
-        # Inference
-        results = self.yolo_model(bgr_image, verbose=False)[0]
-        
-        detections = []
-        
-        if results.masks is None:
-            return detections
-        
-        masks = results.masks.data.cpu().numpy()  # [N, H, W]
-        boxes = results.boxes
-        
-        for i in range(len(boxes)):
-            yolo_class = int(boxes.cls[i].item())
-            conf = float(boxes.conf[i].item())
+            Returns:
+                rgb_batch, depth_batch, mask_batch, bbox_batch: tensori solo per sample validi
+                valid_indices: lista degli indici originali del batch che sono stati processati
+            """
+            batch_size = len(rgb_paths)
             
-            # Converti class YOLO -> LineMOD obj_id
-            if yolo_class not in self.YOLO_TO_LINEMOD:
-                continue
+            rgb_list = []
+            depth_list = []
+            mask_list = []
+            bbox_list = []
+            valid_indices = []  # Traccia quali sample sono validi
             
-            linemod_id = self.YOLO_TO_LINEMOD[yolo_class]
+            # YOLO inference su tutte le immagini del batch
+            yolo_results = self.yolo_model(list(rgb_paths), conf=self.YOLO_CONF, verbose=False)
             
-            # Bbox in formato [x, y, w, h]
-            xyxy = boxes.xyxy[i].cpu().numpy()
-            x1, y1, x2, y2 = xyxy
-            bbox = [x1, y1, x2 - x1, y2 - y1]  # [x, y, w, h]
+            for i in range(batch_size):
+                rgb_path = rgb_paths[i]
+                depth_path = depth_paths[i]
+                obj_id = int(class_ids[i])
+                target_yolo_class = self.LINEMOD_TO_YOLO[obj_id]
+                
+                # Prendi risultato YOLO per questa immagine
+                yolo_res = yolo_results[i]
+                
+                # Trova la detection per la classe target (prendi quella con conf più alta)
+                boxes = yolo_res.boxes
+                best_idx = None
+                best_conf = 0.0
+                for j, (cls, conf) in enumerate(zip(boxes.cls, boxes.conf)):
+                    if int(cls) == target_yolo_class and float(conf) > best_conf:
+                        best_conf = float(conf)
+                        best_idx = j
+                
+                # CHECK: YOLO ha trovato l'oggetto?
+                if best_idx is None:
+                    # Skip questo sample
+                    continue
+                
+                # Carica RGB
+                rgb_img = cv2.cvtColor(cv2.imread(rgb_path), cv2.COLOR_BGR2RGB)
+                
+                # Carica Depth originale
+                depth_img = cv2.imread(depth_path, cv2.IMREAD_UNCHANGED).astype(np.float32) / 1000.0
+                
+                # Estrai bbox [x_min, y_min, w, h]
+                xyxy = boxes.xyxy[best_idx].cpu().numpy()
+                bbox = [xyxy[0], xyxy[1], xyxy[2] - xyxy[0], xyxy[3] - xyxy[1]]
+                
+                # Estrai maschera
+                mask_data = yolo_res.masks.data[best_idx].cpu().numpy()
+                if mask_data.shape != (self.img_h, self.img_w):
+                    mask_data = cv2.resize(mask_data, (self.img_w, self.img_h), interpolation=cv2.INTER_NEAREST)
+                mask = (mask_data > 0.5).astype(np.uint8) * 255
+                
+                # Crop & Resize
+                rgb_crop = crop_square_resize(rgb_img, bbox, self.img_size, is_depth=False)
+                depth_crop = crop_square_resize(depth_img, bbox, self.img_size, is_depth=True)
+                mask_crop = crop_square_resize(mask, bbox, self.img_size, is_depth=True)
+                mask_crop = (mask_crop > 127).astype(np.float32)
+                
+                # To tensors
+                rgb_list.append(self.transform(rgb_crop))
+                depth_list.append(torch.from_numpy(depth_crop).float().unsqueeze(0))
+                mask_list.append(torch.from_numpy(mask_crop).float().unsqueeze(0))
+                
+                # Bbox normalizzata
+                x, y, w, h = bbox
+                bbox_norm = torch.tensor([
+                    (x + w/2) / self.img_w,
+                    (y + h/2) / self.img_h,
+                    w / self.img_w,
+                    h / self.img_h
+                ], dtype=torch.float32)
+                bbox_list.append(bbox_norm)
+                
+                # Questo sample è valido
+                valid_indices.append(i)
             
-            # Mask - resize alla dimensione originale se necessario
-            mask = masks[i]
-            if mask.shape[0] != self.img_h or mask.shape[1] != self.img_w:
-                mask = cv2.resize(mask, (self.img_w, self.img_h), interpolation=cv2.INTER_NEAREST)
+            # Se nessun sample valido, ritorna None
+            if len(valid_indices) == 0:
+                return None, None, None, None, []
             
-            detections.append({
-                'obj_id': linemod_id,
-                'bbox': bbox,
-                'mask': (mask > 0.5).astype(np.uint8) * 255,
-                'confidence': conf
-            })
-        
-        return detections
+            # Stack tutto
+            rgb_batch = torch.stack(rgb_list)      # [N, 3, 224, 224]
+            depth_batch = torch.stack(depth_list)  # [N, 1, 224, 224]
+            mask_batch = torch.stack(mask_list)    # [N, 1, 224, 224]
+            bbox_batch = torch.stack(bbox_list)    # [N, 4]
+            
+            return rgb_batch, depth_batch, mask_batch, bbox_batch, valid_indices
 
     def run(self):
         """
@@ -289,7 +370,8 @@ class DAMF_Evaluator:
             obj_id: {
                 'correct': 0,
                 'total': 0,
-                'errors': []  # in cm
+                'errors': [] , 
+                'yolo_missed': 0 
             } 
             for obj_id in self.DIAMETERS.keys()
         }
@@ -301,6 +383,7 @@ class DAMF_Evaluator:
         # Statistiche globali
         total_correct = 0
         total_predictions = 0
+        total_yolo_missed = 0
         all_errors = []  # in cm
 
         # --- NUOVO: Liste per X, Y, Z ---
@@ -314,30 +397,67 @@ class DAMF_Evaluator:
             for batch in tqdm(self.val_loader, desc="Evaluating"):
                 
                 # Estrai dati dal batch
-                rgb_batch = batch['image'].to(self.device)
-                mask_batch = batch['mask'].to(self.device)
+                #rgb_batch = batch['image'].to(self.device)
+                #mask_batch = batch['mask'].to(self.device)
 
-                depth_batch = batch['depth'].to(self.device)
-                cam_params = batch['cam_params'].to(self.device, non_blocking=True)
-                bb_info = batch['bbox_norm'].to(self.device, non_blocking=True)
+                paths = batch['path']
+                depth_paths = batch['depth_path']
+                depth_batch = batch['depth']#.to(self.device)
+                cam_params = batch['cam_params']#.to(self.device, non_blocking=True)
+                #bb_info = batch['bbox_norm'].to(self.device, non_blocking=True)
                 gt_translation = batch['translation'].cpu().numpy()  # [B, 3]
                 gt_quats = batch['quaternion']  # [B, 4]
                 class_ids = batch['class_id'].numpy()  # [B]
+
+                # Processa con YOLO (ritorna solo sample validi)
+                rgb_batch, depth_batch, mask_batch, bbox_batch, valid_indices = self._process_yolo_batch(
+                    paths, depth_paths, class_ids
+                )
+
+                # Conta YOLO misses per questo batch
+                batch_size = len(paths)
+                num_valid = len(valid_indices)
+                num_missed = batch_size - num_valid
+                total_yolo_missed += num_missed
+                
+                # Aggiorna yolo_missed per classe
+                for i in range(batch_size):
+                    if i not in valid_indices:
+                        obj_id = int(class_ids[i])
+                        if obj_id in class_stats:
+                            class_stats[obj_id]['yolo_missed'] += 1
+                
+                # Se nessun sample valido, skip batch
+                if num_valid == 0:
+                    continue
+
+                rgb_batch = rgb_batch.to(self.device)
+                depth_batch = depth_batch.to(self.device)
+                mask_batch = mask_batch.to(self.device)
+                bbox_batch = bbox_batch.to(self.device)
+
+                B = rgb_batch.shape[0]
+                cam_params = self.cam_params_norm.unsqueeze(0).repeat(B, 1).to(self.device)
+
                 
                 # 1. INFERENCE del modello
-                pred_quats, pred_trans = self.model(rgb_batch, depth_batch, bb_info, cam_params, mask_batch)
+                pred_quats, pred_trans = self.model(rgb_batch, depth_batch, bbox_batch, cam_params, mask_batch)
                 
                 # 2. Converti quaternioni in matrici di rotazione
                 pred_R = self._quaternion_to_matrix(pred_quats)  # [B, 3, 3]
-                gt_R = self._quaternion_to_matrix(gt_quats)  # [B, 3, 3]
-                
+
+                valid_gt_quats = gt_quats[valid_indices]
+                valid_gt_trans = gt_translation[valid_indices]
+                valid_class_ids = class_ids[valid_indices]
+
+                gt_R = self._quaternion_to_matrix(valid_gt_quats)  # [B, 3, 3]
                 pred_t = pred_trans.cpu().numpy()  # [B, 3]
                 
                 batch_size = rgb_batch.shape[0]
                 
                 # 3. Calcola ADD per ogni sample nel batch
-                for i in range(batch_size):
-                    obj_id = int(class_ids[i])
+                for i in range(B):
+                    obj_id = int(valid_class_ids[i])
                     
                     # Salta se non abbiamo il modello 3D
                     if obj_id not in self.models_3d:
@@ -363,7 +483,7 @@ class DAMF_Evaluator:
                     all_rot_errors_m.append(r_err_m * 100.0)    # Convert to cm
                     all_rot_errors_deg.append(r_err_deg)
 
-                    # --- NUOVO: Append errori assi (convertiti in cm) ---
+                    # Append errori assi (convertiti in cm) ---
                     all_tx_errors.append(tx * 100.0)
                     all_ty_errors.append(ty * 100.0)
                     all_tz_errors.append(tz * 100.0)
@@ -406,9 +526,9 @@ class DAMF_Evaluator:
         # 5. Stampa report
         self._print_report(accuracy, mean_add_cm, mean_trans, mean_rot_cm, mean_rot_deg, 
                            mean_tx, mean_ty, mean_tz,  # <--- Nuovi argomenti
-                           total_predictions, class_stats) # <--- Fix class_stats        
+                           total_predictions,total_yolo_missed, class_stats) # <--- Fix class_stats        
         # 6. Genera plot
-        self._plot_results(class_stats)
+        self._plot_results(class_stats) 
         
         return {
             'accuracy': accuracy,
@@ -419,45 +539,47 @@ class DAMF_Evaluator:
             'mean_rot_deg': mean_rot_deg,
             'class_stats': class_stats
         }
-
     def _print_report(self, accuracy, mean_add, mean_trans, mean_rot_cm, mean_rot_deg, 
-                    mean_tx, mean_ty, mean_tz, # <--- Nuovi parametri
-                    total, class_stats):       # <--- Fix parametro mancante
-        
-        print("\n" + "="*60)
-        print("FINAL REPORT (Detailed Breakdown)")
-        print("="*60)
-        print(f" Samples Evaluated: {total}")
-        print("-" * 40)
-        print(f" TOTAL ACCURACY:    {accuracy:.2f} %")
-        print(f" COMBINED ADD Error:{mean_add:.2f} cm")
-        print("-" * 40)
-        print(" ERROR BREAKDOWN:")
-        print(f" -> Translation (Total): {mean_trans:.2f} cm")
-        # --- NUOVO: Stampa dettagliata X, Y, Z ---
-        print(f"    |-> Err X: {mean_tx:.2f} cm")
-        print(f"    |-> Err Y: {mean_ty:.2f} cm")
-        print(f"    |-> Err Z: {mean_tz:.2f} cm (Depth)")
-        # -----------------------------------------
-        print(f" -> Rotation (Mesh):     {mean_rot_cm:.2f} cm")
-        print(f" -> Rotation (Angle):    {mean_rot_deg:.2f} deg")
-        print("="*60)
-        
-        # Loop per classe (Fix name error)
-        print(f"{'OBJECT':<15} {'COUNT':<10} {'ACCURACY':<10} {'MEAN ERR (cm)':<15}")
-        print("-" * 60)
-        for obj_id in sorted(list(class_stats.keys())):
-            stats = class_stats[obj_id]
-            if stats['total'] == 0:
-                continue
-                
-            obj_name = self.OBJ_NAMES.get(obj_id, f"obj_{obj_id}")
-            acc = (stats['correct'] / stats['total']) * 100.0
-            avg_err = np.mean(stats['errors']) * 100
+                        mean_tx, mean_ty, mean_tz,
+                        total, total_yolo_missed, class_stats):
             
-            print(f"{obj_name:<15} {stats['total']:<10} {acc:>6.2f}%      {avg_err:>8.2f}")
-        
-        print("="*70 + "\n")
+            print("\n" + "="*60)
+            print("FINAL REPORT (Detailed Breakdown)")
+            print("="*60)
+            print(f" Samples Evaluated: {total}")
+            print(f" YOLO Missed: {total_yolo_missed}")
+            total_samples = total + total_yolo_missed
+            yolo_det_rate = (total / total_samples * 100.0) if total_samples > 0 else 0.0
+            print(f" YOLO Detection Rate: {yolo_det_rate:.2f}%")
+            print("-" * 40)
+            print(f" TOTAL ACCURACY:    {accuracy:.2f} %")
+            print(f" COMBINED ADD Error:{mean_add:.2f} cm")
+            print("-" * 40)
+            print(" ERROR BREAKDOWN:")
+            print(f" -> Translation (Total): {mean_trans:.2f} cm")
+            print(f"    |-> Err X: {mean_tx:.2f} cm")
+            print(f"    |-> Err Y: {mean_ty:.2f} cm")
+            print(f"    |-> Err Z: {mean_tz:.2f} cm (Depth)")
+            print(f" -> Rotation (Mesh):     {mean_rot_cm:.2f} cm")
+            print(f" -> Rotation (Angle):    {mean_rot_deg:.2f} deg")
+            print("="*60)
+            
+            # Loop per classe con YOLO missed
+            print(f"{'OBJECT':<12} {'COUNT':<8} {'MISSED':<8} {'ACCURACY':<10} {'MEAN ERR (cm)':<12}")
+            print("-" * 60)
+            for obj_id in sorted(list(class_stats.keys())):
+                stats = class_stats[obj_id]
+                if stats['total'] == 0 and stats.get('yolo_missed', 0) == 0:
+                    continue
+                    
+                obj_name = self.OBJ_NAMES.get(obj_id, f"obj_{obj_id}")
+                acc = (stats['correct'] / stats['total']) * 100.0 if stats['total'] > 0 else 0.0
+                avg_err = np.mean(stats['errors']) * 100 if len(stats['errors']) > 0 else 0.0
+                missed = stats.get('yolo_missed', 0)
+                
+                print(f"{obj_name:<12} {stats['total']:<8} {missed:<8} {acc:>6.2f}%      {avg_err:>8.2f}")
+            
+            print("="*70 + "\n")
 
     def _plot_results(self, class_stats):
         """Genera i plot dei risultati per classe."""
@@ -497,7 +619,7 @@ class DAMF_Evaluator:
         for bar in bars:
             height = bar.get_height()
             ax1.text(bar.get_x() + bar.get_width()/2., height + 1.5,
-                     f'{height:.1f}%', ha='center', va='bottom', fontsize=9, fontweight='bold')
+                    f'{height:.1f}%', ha='center', va='bottom', fontsize=9, fontweight='bold')
         
         # Ruota labels se necessario
         ax1.set_xticklabels(labels, rotation=45, ha='right')
@@ -523,7 +645,7 @@ class DAMF_Evaluator:
             for bar in bars:
                 height = bar.get_height()
                 ax2.text(bar.get_x() + bar.get_width()/2., height + 0.1,
-                         f'{height:.1f}', ha='center', va='bottom', fontsize=8)
+                        f'{height:.1f}', ha='center', va='bottom', fontsize=8)
         
         plt.tight_layout()
         

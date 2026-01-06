@@ -4,10 +4,45 @@ import os
 import re
 import torch
 from DAMF_Eval import DAMF_Evaluator
+from DAMF_Eval_WYOLO import DAMF_Evaluator_WYolo
 from PoseNet_evaluation import PoseNetEvaluator
 from Trainer_A100 import DAMFTurboTrainerA100
 
 if __name__ == "__main__":
+
+    config = {
+        'dataset_root': '/Users/emanuelerosapepe/Desktop/test_YOLO/Linemod_preprocessed',
+        'split_train': 'data/autosplit_train_ALL.txt',
+        'split_val': 'data/autosplit_val_ALL.txt',
+        'save_dir': 'checkpoints/',
+        'training_mode': 'easy',
+
+        # Training
+        'epochs': 100,
+        'batch_size': 32,
+        'lr': 1e-4,
+
+        'use_weighted_loss': False,   # ← Da False a True
+        'rot_weight': 1,            # ← Aggiungi questo
+        'trans_weight': 4,          # ← Aggiungi questo
+
+        # Model
+        'temperature': 2.0,
+        'num_points_mesh': 500,
+
+        # Optimizer
+        'T_0': 10,
+        'T_mult': 2,
+        'eta_min': 1e-6,
+
+        # Regularization
+        'early_stop_patience': 30
+    }
+
+    trainer = DAMFTurboTrainerA100(config)
+    trainer.run()
+
+    """
     config = {
         # Percorsi
         'dataset_root': "/Users/emanuelerosapepe/Desktop/test_YOLO/Linemod_preprocessed",  # MODIFICA QUESTO
@@ -15,19 +50,21 @@ if __name__ == "__main__":
         'model_dir': 'checkpoints/',  # Directory con best_DAMF.pth
         'save_dir': 'checkpoints_results/',
         'training_mode': 'easy',
+        'yolo_model_path': 'checkpoints/best_seg_YOLO.pt',
         'model_old': False,
         'batch_size': 32,
         'num_workers': 12,  
-        'temperature': 2.0,  # Stesso usato in training
+        'temperature': 2,  # Stesso usato in training
     }
 
     # Esegui valutazione
-    evaluator = DAMF_Evaluator(config)
+    evaluator = DAMF_Evaluator_WYolo(config)
     results = evaluator.run()
 
     print("\n✅ Evaluation completed!")
     print(f"Final Accuracy: {results['accuracy']:.2f}%")
     print(f"Mean ADD: {results['mean_add_cm']:.2f} cm")
+    """
     """
     config = {
         # Percorsi
@@ -41,37 +78,7 @@ if __name__ == "__main__":
     evaluator = PoseNetEvaluator(config)
     evaluator.run()
     """
-    """
-    config = {
-        'dataset_root': '/Users/emanuelerosapepe/Desktop/test_YOLO/Linemod_preprocessed',
-        'split_train': 'data/autosplit_train_ALL.txt',
-        'split_val': 'data/autosplit_val_ALL.txt',
-        'save_dir': 'checkpoints/',
 
-        # Training
-        'epochs': 100,
-        'batch_size': 32,
-
-        'use_weighted_loss': False,   # ← Da False a True
-        'rot_weight': 1,            # ← Aggiungi questo
-        'trans_weight': 4,          # ← Aggiungi questo
-
-        # Model
-        'temperature': 2.0,
-        'num_points_mesh': 500,
-
-        # Optimizer
-        'T_0': 10,
-        'T_mult': 2,/Users/emanuelerosapepe/Desktop/test_YOLO/Linemod_preprocessed
-        'eta_min': 1e-6,
-
-        # Regularization
-        'early_stop_patience': 30
-    }
-
-    trainer = DAMFTurboTrainerA100(config)
-    trainer.run()
-    """
     """
 
     config = {

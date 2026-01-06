@@ -109,13 +109,13 @@ class DAMF_Evaluator:
         
         model = DenseFusion_Masked_DualAtt_NetVar(
             pretrained=False,  # Non servono pesi ImageNet, carichiamo i tuoi
-            temperature=self.cfg.get('temperature', 2.0)
+            temperature=self.cfg.get('temperature', 1.5)
         ).to(self.device)
         
         #weights_path = os.path.join(self.cfg['model_dir'], 'DenseFusion_Masked_DualAttNet_Hard1cm.pth')
         #weights_path = os.path.join(self.cfg['model_dir'], 'DenseFusion_Masked_DualAtt_NetVar_Dropout.pth')
         #weights_path = os.path.join(self.cfg['model_dir'], 'DenseFusion_Masked_DualAtt_NetVarRefinerHard.pth')
-        weights_path = os.path.join(self.cfg['model_dir'], 'DenseFusion_Masked_DualAtt_NetVar_WOAttention.pth')
+        weights_path = os.path.join(self.cfg['model_dir'], 'DenseFusion_Masked_DualAtt_NetVar_WOAttention_Hard.pth')
 
         """
         model = DAMF_Net(

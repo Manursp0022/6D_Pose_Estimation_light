@@ -13,7 +13,7 @@ from utils.Posenet_utils.posenet_dataset_ALL import LineModPoseDataset
 from utils.Posenet_utils.posenet_dataset_ALLMasked import LineModPoseDatasetMasked
 from utils.Posenet_utils.posenet_dataset_AltMasked import LineModPoseDataset_AltMasked
 from utils.Posenet_utils.DenseFusion_Loss_log import DenseFusionLoss
-
+from models.DF_Att_NetVar import DenseFusion_Att_NetVar
 from models.DFMasked_DualAtt_Net import DenseFusion_Masked_DualAtt_Net
 
 from models.DFMasked_DualAtt_NetVar import DenseFusion_Masked_DualAtt_NetVar
@@ -32,9 +32,15 @@ class DAMFTurboTrainerA100:
 
         # MIXED PRECISION SCALER ---
         self.scaler = torch.cuda.amp.GradScaler()
-
+        """
         print("Initializing  DenseFusion_Masked_DualAtt_NetVar (A100 Optimized)...")
         self.model = DenseFusion_Masked_DualAtt_NetVar(
+            pretrained=True, 
+            temperature=self.cfg['temperature']
+        ).to(self.device)
+        """
+        print("Initializing  DenseFusion_Masked_DualAtt_NetVar (A100 Optimized)...")
+        self.model = DenseFusion_Att_NetVar(
             pretrained=True, 
             temperature=self.cfg['temperature']
         ).to(self.device)
@@ -270,8 +276,9 @@ class DAMFTurboTrainerA100:
             # --- AUTOMATIC MIXED PRECISION ---
             with torch.autocast(device_type='cuda', dtype=torch.float16):
                 # CORRETTO: rimosso return_debug
-                pred_rot, pred_trans = self.model(images, depths,bb_info,cam_params, mask=masks)
-                
+                pred_rot, pred_trans, debug = self.model(images, depths,bb_info,cam_params, return_debug=True)
+                learned_mask = debug['learned_mask']
+
                 current_model_points = self.models_tensor[class_ids.long()] 
                 loss, metrics = self.criterion(
                     pred_rot, pred_trans, gt_q, gt_t, 

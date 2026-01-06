@@ -170,7 +170,6 @@ class LineModPoseDatasetMasked(Dataset):
             if sample['use_mask_all']:
                 # === FOLDER 02: Decidi se usare maschera pulita o contaminata ===
                 use_contaminated = (self.mode == 'train')
-                print("using contaminated")
                 if use_contaminated:
                     # Maschera "sporca": include tutti gli oggetti nel crop
                     mask = self._extract_contaminated_mask(mask_raw)
@@ -264,6 +263,7 @@ class LineModPoseDatasetMasked(Dataset):
             'translation': trans_tensor,
             'class_id': target_obj_id,
             'path': sample['img_path'],
+            'depth_path': sample['depth_path'],
             'bbox_norm': torch.tensor(bbox_norm, dtype=torch.float32),
             'cam_params': cam_params
         }
