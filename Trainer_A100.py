@@ -277,7 +277,6 @@ class DAMFTurboTrainerA100:
             with torch.autocast(device_type='cuda', dtype=torch.float16):
                 # CORRETTO: rimosso return_debug
                 pred_rot, pred_trans, debug = self.model(images, depths,bb_info,cam_params, return_debug=True)
-                learned_mask = debug['learned_mask']
 
                 current_model_points = self.models_tensor[class_ids.long()] 
                 loss, metrics = self.criterion(

@@ -89,9 +89,9 @@ class DenseFusion_Att_NetVar(nn.Module):
         
         debug_info = {}
         if return_debug:
-            debug_info['spatial_mask_max'] = spatial_mask.max().item()
-            debug_info['spatial_mask_min'] = spatial_mask.min().item()
-            debug_info['spatial_mask_mean'] = spatial_mask.mean().item()
+            # Salva i tensori direttamente, NON usare .item()
+            debug_info['spatial_mask'] = spatial_mask
+            debug_info['learned_mask'] = spatial_mask
         
         return fused_feat, rgb_clean, depth_clean, spatial_mask, debug_info
 
@@ -128,12 +128,6 @@ class DenseFusion_Att_NetVar(nn.Module):
         
         # Final Normalize
         pred_rot_global = F.normalize(pred_rot_global + self.eps, p=2, dim=1)
-        
-
-        if return_debug and debug_info is not None:
-            debug_info['conf_max'] = weights.max().item()
-            debug_info['conf_mean'] = weights.mean().item()
-            debug_info['conf_std'] = weights.std().item()
 
         return pred_rot_global, pred_trans_global, debug_info
 
@@ -143,7 +137,6 @@ class DenseFusion_Att_NetVar(nn.Module):
         pred_r, pred_t, dbg_final = self._weighted_pooling(fused_feat, bs, rgb_enhanced, depth_enhanced,  bb_info, cam_params, return_debug, dbg)
         
         if return_debug:
-            dbg_final['learned_mask'] = spatial_mask 
             return pred_r, pred_t, dbg_final
             
         return pred_r, pred_t
