@@ -3,9 +3,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.models as models 
 from utils.Posenet_utils.attention import GeometricAttention 
-from Refinement_Section.PoseRefinement import PoseRefinement
+from utils.Posenet_utils.CrossModalAttention import CrossModalAttention
 
-class DenseFusion_Masked_DualAtt_NetVarWRef(nn.Module):
+class DenseFusion_Masked_DualAtt_NetVarNoMask(nn.Module):
     def __init__(self, pretrained=True, temperature=2.0):
         super().__init__()
         
@@ -14,12 +14,15 @@ class DenseFusion_Masked_DualAtt_NetVarWRef(nn.Module):
 
         self.rgb_backbone = models.resnet18(weights='DEFAULT' if pretrained else None)
         self.depth_backbone = models.resnet18(weights='DEFAULT' if pretrained else None)
-        
-        self.rgb_extractor = nn.Sequential(*list(self.rgb_backbone.children())[:-2])
+
+        # list(... children()) takes all the pieces of ResNet. 
+        #[:-2] Cut away the last two pieces: Global Average Pooling (which would flatten everything 
+        #to 1 x 1) and the final Fully Connected Layer.
+        self.rgb_extractor = nn.Sequential(*list(self.rgb_backbone.children())[:-2]) #
         self.depth_extractor = nn.Sequential(*list(self.depth_backbone.children())[:-2])
         
-        self.attention_block = GeometricAttention(in_channels=512)
-        self.refinement = PoseRefinement(feat_dim=512)
+        #self.attention_block = GeometricAttention(in_channels=512)
+        self.attention_block = CrossModalAttention(channels=512)
 
         self.feat_dropout = nn.Dropout2d(p=0.3)
         self.head_dropout = nn.Dropout2d(p=0.15)
@@ -64,9 +67,8 @@ class DenseFusion_Masked_DualAtt_NetVarWRef(nn.Module):
             nn.Conv2d(128, 1, 1) 
         )
     
-    def _forward_fusion(self, rgb, depth, mask=None, return_debug=False):
-        """Helper function condivisa tra forward e refine"""
-        # MASKING
+    def _forward_fusion(self, rgb, depth, bb_info, mask=None, return_debug=False):
+
         if mask is not None:
             rgb = rgb * mask
             depth = depth * mask
@@ -77,17 +79,13 @@ class DenseFusion_Masked_DualAtt_NetVarWRef(nn.Module):
 
         rgb_feat = self.feat_dropout(rgb_feat)
         depth_feat = self.feat_dropout(depth_feat)
-        
-        att_map = self.attention_block(depth_feat) 
 
-        # RESIDUAL ATTENTION: (1 + att) per non perdere segnale
-        rgb_enhanced = rgb_feat * (1 + att_map)  
-        depth_enhanced = depth_feat * (1 + att_map) #[B, 512, 7, 7]
+        #att_map = self.attention_block(depth_feat) 
+        rgb_clean, depth_clean, soft_mask = self.cross_attention(rgb_feat, depth_feat, bb_info)
         
         # FUSION + RESIDUAL
-        combined = torch.cat([rgb_enhanced, depth_enhanced], dim=1)
+        combined = torch.cat([rgb_clean, depth_clean], dim=1)
         x = self.fusion_entry(combined)
-        # Residual connection: x + Block(x)
         x_res = self.fusion_res(x)
         fused_feat = F.relu(x + x_res) # Residual add & final ReLU
         
@@ -96,26 +94,28 @@ class DenseFusion_Masked_DualAtt_NetVarWRef(nn.Module):
             debug_info['att_max_rgb']  = att_map.max().item()
             debug_info['att_min_rgb']  = att_map.min().item()
             debug_info['att_std_rgb']  = att_map.std().item()
+            debug_info['attention_map'] = soft_mask
         
-        return fused_feat, rgb_enhanced, depth_enhanced, debug_info
+        return fused_feat, rgb_feat, depth_feat, debug_info
 
-    def _weighted_pooling(self, fused_feat, batch_size, rgb_enhanced, depth_enhanced, bb_info,cam_params,return_debug=False, debug_info=None):
+    def _weighted_pooling(self, fused_feat, batch_size, rgb_feat, depth_feat, bb_info,cam_params,return_debug=False, debug_info=None):
         """Logica di pooling intelligente condivisa"""
 
-        rot_input = torch.cat([fused_feat, rgb_enhanced], dim=1)
+        rot_input = torch.cat([fused_feat, rgb_feat], dim=1)
         pred_rot_map = self.rot_head(rot_input)     # [B, 4, 7, 7]
 
         bb_spatial = bb_info.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, 7, 7)      # [B, 4, 7, 7]
         cam_spatial = cam_params.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, 7, 7)  # [B, 4, 7, 7]
+
         trans_input = torch.cat([fused_feat, bb_spatial, cam_spatial], dim=1) 
         pred_trans_map = self.trans_head(trans_input) # [B, 3, 7, 7]
 
-        conf_input = torch.cat([fused_feat, rgb_enhanced, bb_spatial, cam_spatial], dim=1) 
+        conf_input = torch.cat([fused_feat, rgb_feat, bb_spatial, cam_spatial], dim=1) 
         conf_logits = self.conf_head(conf_input)   # [B, 1, 7, 7] (Logits)
         
         # Flatten Spatial Dimensions
         pred_rot_map = pred_rot_map.view(batch_size, 4, -1)   # [B, 4, 49]
-        pred_trans_map = pred_trans_map.view(batch_size, 3, -1) # [B, 3, 49] Ha senso ancora questa . view 
+        pred_trans_map = pred_trans_map.view(batch_size, 3, -1) # [B, 3, 49] Ha senso ancora questa .view 
         conf_logits = conf_logits.view(batch_size, 1, -1)     # [B, 1, 49]
         
         # Normalize Quaternions (with Epsilon)
@@ -123,35 +123,28 @@ class DenseFusion_Masked_DualAtt_NetVarWRef(nn.Module):
         
         # --- WEIGHT CALCULATION ---
         # Softmax with Temperature onlogits
-        weights = F.softmax(conf_logits / self.temperature, dim=2) # [B, 1, 49]
+        weights = F.softmax(conf_logits / self.temperature, dim=2) #[B, 1, 49]
         
         # Weighted Average
-        pred_rot_global = torch.sum(pred_rot_map * weights, dim=2)   # [B, 4]
+        pred_rot_global = torch.sum(pred_rot_map * weights, dim=2)   #[B, 4]
         pred_trans_global = torch.sum(pred_trans_map * weights, dim=2) # [B, 3]
         
         # Final Normalize
         pred_rot_global = F.normalize(pred_rot_global + self.eps, p=2, dim=1)
         
-        # Global Feature Vector (Weighted)
-        fused_flat = fused_feat.view(batch_size, 512, -1)
-        global_feat_weighted = torch.sum(fused_flat * weights, dim=2) # [B, 512]
 
         if return_debug and debug_info is not None:
             debug_info['conf_max'] = weights.max().item()
             debug_info['conf_mean'] = weights.mean().item()
             debug_info['conf_std'] = weights.std().item()
 
-        return pred_rot_global, pred_trans_global, global_feat_weighted, debug_info
+        return pred_rot_global, pred_trans_global, debug_info
 
-    def forward(self, rgb, depth, bb_info, cam_params, num_refine=2,mask=None, return_debug=False):
+    def forward(self, rgb, depth, bb_info, cam_params, mask=None, return_debug=False):
         bs = rgb.size(0)
-        fused_feat, rgb_enhanced, depth_enhanced, dbg = self._forward_fusion(rgb, depth, mask, return_debug)
-        pred_r, pred_t, global_feat_weighted, dbg_final = self._weighted_pooling(fused_feat, bs, rgb_enhanced, depth_enhanced,  bb_info, cam_params, return_debug, dbg)
-
-        # Iterative refinement
-        for _ in range(num_refine):
-            pred_rot, pred_trans = self.refinement(global_feat_weighted, pred_r, pred_t)
-
+        fused_feat, rgb_enhanced, depth_enhanced, dbg = self._forward_fusion(rgb, depth, bb_info, mask, return_debug)
+        pred_r, pred_t, dbg_final = self._weighted_pooling(fused_feat, bs, rgb_enhanced, depth_enhanced,  bb_info, cam_params, return_debug, dbg)
+        
         if return_debug:
             return pred_r, pred_t, dbg_final
         return pred_r, pred_t

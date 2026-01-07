@@ -9,9 +9,7 @@ from scipy.spatial.transform import Rotation as R
 #from models.DFMasked_DualAtt_NetVar_WRefiner import DenseFusion_Masked_DualAtt_NetVarWRef
 from models.DFMasked_DualAtt_Net import DenseFusion_Masked_DualAtt_Net
 from models.DFMasked_DualAtt_NetVar import DenseFusion_Masked_DualAtt_NetVar
-from models.DFMasked_DualAtt_NetVar import DenseFusion_Masked_DualAtt_NetVar
 from models.DFMasked_DualAtt_NetVarGlobal import DenseFusion_Masked_DualAtt_NetVarGlobal
-from models.DFMasked_DualAtt_NetVar_Weighted_WRefiner import DenseFusion_Masked_DualAtt_NetVarWRef
 
 from utils.Posenet_utils.posenet_dataset_ALL import LineModPoseDataset
 from utils.Posenet_utils.PoseEvaluator import PoseEvaluator 

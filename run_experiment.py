@@ -65,6 +65,7 @@ if __name__ == "__main__":
     print(f"Final Accuracy: {results['accuracy']:.2f}%")
     print(f"Mean ADD: {results['mean_add_cm']:.2f} cm")
     """
+
     """
     config = {
         # Percorsi

@@ -12,9 +12,7 @@ from ultralytics import YOLO
 #from models.DFMasked_DualAtt_NetVar_WRefiner import DenseFusion_Masked_DualAtt_NetVarWRef
 from models.DFMasked_DualAtt_Net import DenseFusion_Masked_DualAtt_Net
 from models.DFMasked_DualAtt_NetVar import DenseFusion_Masked_DualAtt_NetVar
-from models.DFMasked_DualAtt_NetVar import DenseFusion_Masked_DualAtt_NetVar
 from models.DFMasked_DualAtt_NetVarGlobal import DenseFusion_Masked_DualAtt_NetVarGlobal
-from models.DFMasked_DualAtt_NetVar_Weighted_WRefiner import DenseFusion_Masked_DualAtt_NetVarWRef
 
 from utils.Posenet_utils.posenet_dataset_ALL import LineModPoseDataset
 from utils.Posenet_utils.PoseEvaluator import PoseEvaluator 
@@ -260,6 +258,21 @@ class DAMF_Evaluator_WYolo:
         quats_scipy = np.concatenate([quats[:, 1:], quats[:, 0:1]], axis=1)
         
         return R.from_quat(quats_scipy).as_matrix()
+
+    def _calculate_iou(self, mask1, mask2):
+        """
+        Calcola Intersection over Union tra due maschere binarie (numpy arrays).
+        """
+        # Assicuriamoci che siano booleani o 0/1
+        m1 = (mask1 > 0).astype(bool)
+        m2 = (mask2 > 0).astype(bool)
+        
+        intersection = np.logical_and(m1, m2).sum()
+        union = np.logical_or(m1, m2).sum()
+        
+        if union == 0:
+            return 0.0
+        return (intersection / union) * 100.0
         
     def _process_yolo_batch(self, rgb_paths, depth_paths, class_ids):
             """
@@ -356,6 +369,98 @@ class DAMF_Evaluator_WYolo:
             
             return rgb_batch, depth_batch, mask_batch, bbox_batch, valid_indices
 
+    def _process_yolo_batch_wIoU(self, rgb_paths, depth_paths, class_ids):
+        batch_size = len(rgb_paths)
+        
+        rgb_list = []
+        depth_list = []
+        mask_list = []
+        bbox_list = []
+        valid_indices = []
+        
+        # Lista per salvare le IoU di questo batch
+        batch_ious = [] 
+        
+        yolo_results = self.yolo_model(list(rgb_paths), conf=self.YOLO_CONF, verbose=False)
+        
+        for i in range(batch_size):
+            rgb_path = rgb_paths[i]
+            depth_path = depth_paths[i]
+            obj_id = int(class_ids[i])
+            target_yolo_class = self.LINEMOD_TO_YOLO[obj_id]
+            
+            # --- CARICAMENTO MASK GT (Per calcolo IoU) ---
+            # Assumiamo struttura standard LineMOD: .../rgb/1234.png -> .../mask/1234.png
+            mask_gt_path = rgb_path.replace('rgb', 'mask') 
+            # Se la cartella si chiama 'masks' invece di 'mask', adatta la stringa sopra!
+            
+            mask_gt = None
+            if os.path.exists(mask_gt_path):
+                 # Carica in scala di grigi
+                mask_gt = cv2.imread(mask_gt_path, cv2.IMREAD_GRAYSCALE)
+                mask_gt = (mask_gt > 127).astype(np.uint8) # Binarizza
+            # ---------------------------------------------
+
+            yolo_res = yolo_results[i]
+            
+            # Trova best box
+            boxes = yolo_res.boxes
+            best_idx = None
+            best_conf = 0.0
+            for j, (cls, conf) in enumerate(zip(boxes.cls, boxes.conf)):
+                if int(cls) == target_yolo_class and float(conf) > best_conf:
+                    best_conf = float(conf)
+                    best_idx = j
+            
+            if best_idx is None:
+                continue
+            
+            # ... (Caricamento RGB e Depth come prima) ...
+            rgb_img = cv2.cvtColor(cv2.imread(rgb_path), cv2.COLOR_BGR2RGB)
+            depth_img = cv2.imread(depth_path, cv2.IMREAD_UNCHANGED).astype(np.float32) / 1000.0
+            
+            xyxy = boxes.xyxy[best_idx].cpu().numpy()
+            bbox = [xyxy[0], xyxy[1], xyxy[2] - xyxy[0], xyxy[3] - xyxy[1]]
+            
+            # Maschera YOLO (Full Size)
+            mask_data = yolo_res.masks.data[best_idx].cpu().numpy()
+            if mask_data.shape != (self.img_h, self.img_w):
+                mask_data = cv2.resize(mask_data, (self.img_w, self.img_h), interpolation=cv2.INTER_NEAREST)
+            mask_yolo = (mask_data > 0.5).astype(np.uint8) * 255
+            
+            # --- CALCOLO IOU QUI ---
+            if mask_gt is not None:
+                iou = self._calculate_iou(mask_yolo, mask_gt)
+                batch_ious.append(iou)
+            else:
+                batch_ious.append(0.0) # Fallback se manca GT
+            # -----------------------
+
+            # Crop & Resize (Come prima)
+            rgb_crop = crop_square_resize(rgb_img, bbox, self.img_size, is_depth=False)
+            depth_crop = crop_square_resize(depth_img, bbox, self.img_size, is_depth=True)
+            mask_crop = crop_square_resize(mask_yolo, bbox, self.img_size, is_depth=True)
+            mask_crop = (mask_crop > 127).astype(np.float32)
+            
+            rgb_list.append(self.transform(rgb_crop))
+            depth_list.append(torch.from_numpy(depth_crop).float().unsqueeze(0))
+            mask_list.append(torch.from_numpy(mask_crop).float().unsqueeze(0))
+            
+            x, y, w, h = bbox
+            bbox_norm = torch.tensor([(x + w/2) / self.img_w, (y + h/2) / self.img_h, w / self.img_w, h / self.img_h], dtype=torch.float32)
+            bbox_list.append(bbox_norm)
+            valid_indices.append(i)
+        
+        if len(valid_indices) == 0:
+            return None, None, None, None, [], [] # Aggiungi lista vuota per IoU
+        
+        rgb_batch = torch.stack(rgb_list)
+        depth_batch = torch.stack(depth_list)
+        mask_batch = torch.stack(mask_list)
+        bbox_batch = torch.stack(bbox_list)
+        
+        return rgb_batch, depth_batch, mask_batch, bbox_batch, valid_indices, batch_ious # Ritorna anche IoU
+
     def run(self):
         """
         Esegue la valutazione completa sul validation set.
@@ -390,6 +495,8 @@ class DAMF_Evaluator_WYolo:
         all_tx_errors = []
         all_ty_errors = []
         all_tz_errors = []
+
+        all_ious = [] 
         
         self.model.eval()
         
@@ -410,7 +517,7 @@ class DAMF_Evaluator_WYolo:
                 class_ids = batch['class_id'].numpy()  # [B]
 
                 # Processa con YOLO (ritorna solo sample validi)
-                rgb_batch, depth_batch, mask_batch, bbox_batch, valid_indices = self._process_yolo_batch(
+                rgb_batch, depth_batch, mask_batch, bbox_batch, valid_indices, batch_ious = self._process_yolo_batch_wIoU(
                     paths, depth_paths, class_ids
                 )
 
@@ -430,6 +537,8 @@ class DAMF_Evaluator_WYolo:
                 # Se nessun sample valido, skip batch
                 if num_valid == 0:
                     continue
+
+                all_ious.extend(batch_ious)
 
                 rgb_batch = rgb_batch.to(self.device)
                 depth_batch = depth_batch.to(self.device)
@@ -512,7 +621,6 @@ class DAMF_Evaluator_WYolo:
         # 4. Calcola metriche finali
         accuracy = (total_correct / total_predictions * 100.0) if total_predictions > 0 else 0.0
         mean_add_cm = np.mean(all_errors) if len(all_errors) > 0 else 0.0
-        mean_add_cm = np.mean(all_errors) if len(all_errors) > 0 else 0.0
         median_add_cm = np.median(all_errors) if len(all_errors) > 0 else 0.0
 
         mean_trans = np.mean(all_trans_errors) if len(all_trans_errors) > 0 else 0.0
@@ -522,6 +630,12 @@ class DAMF_Evaluator_WYolo:
         mean_tx = np.mean(all_tx_errors) if len(all_tx_errors) > 0 else 0.0
         mean_ty = np.mean(all_ty_errors) if len(all_ty_errors) > 0 else 0.0
         mean_tz = np.mean(all_tz_errors) if len(all_tz_errors) > 0 else 0.0
+
+        mean_iou = np.mean(all_ious) if len(all_ious) > 0 else 0.0
+        print(f"\n🎭 MASK QUALITY REPORT:")
+        print(f"   Mean Mask IoU: {mean_iou:.2f}%")
+        if mean_iou < 85.0:
+            print("   ⚠️ WARNING: Mask Quality is low! This explains the accuracy drop.")
         
         # 5. Stampa report
         self._print_report(accuracy, mean_add_cm, mean_trans, mean_rot_cm, mean_rot_deg, 

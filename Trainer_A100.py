@@ -13,14 +13,12 @@ from utils.Posenet_utils.posenet_dataset_ALL import LineModPoseDataset
 from utils.Posenet_utils.posenet_dataset_ALLMasked import LineModPoseDatasetMasked
 from utils.Posenet_utils.posenet_dataset_AltMasked import LineModPoseDataset_AltMasked
 from utils.Posenet_utils.DenseFusion_Loss_log import DenseFusionLoss
-from models.DF_Att_NetVar import DenseFusion_Att_NetVar
+
 from models.DFMasked_DualAtt_Net import DenseFusion_Masked_DualAtt_Net
 
 from models.DFMasked_DualAtt_NetVar import DenseFusion_Masked_DualAtt_NetVar
 from models.DFMasked_DualAtt_NetVarGlobal import DenseFusion_Masked_DualAtt_NetVarGlobal
-
-from models.DFMasked_DualAtt_NetVar_Weighted_WRefiner import DenseFusion_Masked_DualAtt_NetVarWRef
-from models.DFMasked_DualAtt_NetVarGlobal_WRefiner import DenseFusion_Masked_DualAtt_NetVarGlobal_WRef
+from models.DFMasked_DualAtt_NetVarNoMask import DenseFusion_Masked_DualAtt_NetVarNoMask
 
 class DAMFTurboTrainerA100:
     def __init__(self, config):
@@ -39,8 +37,8 @@ class DAMFTurboTrainerA100:
             temperature=self.cfg['temperature']
         ).to(self.device)
         """
-        print("Initializing  DenseFusion_Masked_DualAtt_NetVar (A100 Optimized)...")
-        self.model = DenseFusion_Att_NetVar(
+        print("Initializing  DenseFusion_Masked_DualAtt_NetVarNoMask (A100 Optimized)...")
+        self.model = DenseFusion_Masked_DualAtt_NetVarNoMask(
             pretrained=True, 
             temperature=self.cfg['temperature']
         ).to(self.device)
@@ -251,6 +249,57 @@ class DAMFTurboTrainerA100:
         
         return all_models.to(self.device)
 
+    def _visualize_and_save_mask(self, rgb, soft_mask, epoch, batch_idx, save_dir, mode="val"):
+        """
+        Salva la visualizzazione della Soft Mask sovrapposta all'RGB.
+        """
+        import matplotlib.pyplot as plt
+        import cv2
+
+        # Crea sottocartella specifica (es. checkpoints/debug_maps/train)
+        debug_path = os.path.join(save_dir, 'debug_maps', mode)
+        os.makedirs(debug_path, exist_ok=True)
+
+        # Prendi il primo elemento del batch [0]
+        # RGB: [3, H, W] -> [H, W, 3] (Denormalizza se necessario)
+        img = rgb[0].detach().cpu().numpy().transpose(1, 2, 0)
+        # Denormalizzazione standard ImageNet (approssimativa per visualizzazione)
+        mean = np.array([0.485, 0.456, 0.406])
+        std = np.array([0.229, 0.224, 0.225])
+        img = std * img + mean
+        img = np.clip(img, 0, 1)
+
+        # Mask: [1, 7, 7] -> [7, 7]
+        mask = soft_mask[0, 0].detach().cpu().numpy()
+        
+        # Upscale della maschera alla dimensione dell'immagine
+        # Usa INTER_CUBIC per vederla "sfumata" (come una heatmap reale)
+        mask_resized = cv2.resize(mask, (img.shape[1], img.shape[0]), interpolation=cv2.INTER_CUBIC)
+
+        # Plot
+        fig, axs = plt.subplots(1, 3, figsize=(15, 5))
+        
+        # 1. Immagine Originale
+        axs[0].imshow(img)
+        axs[0].set_title("Input RGB")
+        axs[0].axis('off')
+        
+        # 2. Maschera Pura (Cosa vede la rete)
+        im1 = axs[1].imshow(mask_resized, cmap='jet', vmin=0, vmax=1)
+        axs[1].set_title(f"Learned Attention (Ep {epoch})")
+        axs[1].axis('off')
+        plt.colorbar(im1, ax=axs[1], fraction=0.046, pad=0.04)
+        
+        # 3. Sovrapposizione
+        axs[2].imshow(img)
+        axs[2].imshow(mask_resized, cmap='jet', alpha=0.5, vmin=0, vmax=1)
+        axs[2].set_title("Overlay")
+        axs[2].axis('off')
+
+        # Salva
+        plt.savefig(os.path.join(debug_path, f'mask_viz_ep{epoch}_b{batch_idx}.png'))
+        plt.close()
+
     def train_epoch(self, epoch):
         self.model.train()
 
@@ -260,11 +309,12 @@ class DAMFTurboTrainerA100:
         steps = 0
         
         pbar = tqdm(self.train_loader, desc=f"Ep {epoch+1} [Train]")
-        
+        batch_idx = 0
+
         for batch in pbar:
             images = batch['image'].to(self.device, non_blocking=True)
             depths = batch['depth'].to(self.device, non_blocking=True)
-            masks  = batch['mask'].to(self.device, non_blocking=True)
+            #masks  = batch['mask'].to(self.device, non_blocking=True)
             cam_params = batch['cam_params'].to(self.device, non_blocking=True)
             bb_info = batch['bbox_norm'].to(self.device, non_blocking=True)
             gt_t = batch['translation'].to(self.device, non_blocking=True)
@@ -275,8 +325,26 @@ class DAMFTurboTrainerA100:
 
             # --- AUTOMATIC MIXED PRECISION ---
             with torch.autocast(device_type='cuda', dtype=torch.float16):
-                # CORRETTO: rimosso return_debug
-                pred_rot, pred_trans, debug = self.model(images, depths,bb_info,cam_params, return_debug=True)
+                active_debug = (batch_idx == 0)
+                # Forward pass
+                if active_debug:
+                    pred_rot, pred_trans, debug = self.model(images, depths,bb_info,cam_params, return_debug=True)                     
+                    # SALVATAGGIO IMMAGINE
+                    if 'attention_map' in debug_info:
+                        self._visualize_and_save_mask(
+                            rgb, 
+                            debug_info['attention_map'], 
+                            epoch, 
+                            batch_idx, 
+                            self.cfg['save_dir'],
+                            mode="train"
+                        )
+                else:
+                    pred_rot, pred_trans, debug = self.model(images, depths,bb_info,cam_params, return_debug=True) 
+
+                batch_idx += 1                    
+
+                #pred_rot, pred_trans, debug = self.model(images, depths,bb_info,cam_params, return_debug=True, mask=masks) original
 
                 current_model_points = self.models_tensor[class_ids.long()] 
                 loss, metrics = self.criterion(
@@ -318,20 +386,40 @@ class DAMFTurboTrainerA100:
         running_rot_loss = 0.0
         running_trans_loss = 0.0
         steps = 0
-        
+        batch_idx = 0
         with torch.no_grad():
             for batch in tqdm(self.val_loader, desc="[Val]"):
                 images = batch['image'].to(self.device, non_blocking=True)
                 depths = batch['depth'].to(self.device, non_blocking=True)
-                masks  = batch['mask'].to(self.device, non_blocking=True)
+                #masks  = batch['mask'].to(self.device, non_blocking=True)
                 cam_params = batch['cam_params'].to(self.device, non_blocking=True)
                 bb_info = batch['bbox_norm'].to(self.device, non_blocking=True)
                 gt_t = batch['translation'].to(self.device, non_blocking=True)
                 gt_q = batch['quaternion'].to(self.device, non_blocking=True)
                 class_ids = batch['class_id'].to(self.device)
 
-                with torch.autocast(device_type='cuda', dtype=torch.float16):
-                    pred_rot, pred_trans = self.model(images, depths,bb_info,cam_params, mask=masks)
+                with torch.autocast(device_type='cuda', dtype=torch.float16): 
+                    active_debug = (batch_idx == 0)
+
+                    # Forward pass
+                    if active_debug:
+                        pred_rot, pred_trans, debug = self.model(images, depths,bb_info,cam_params, return_debug=True)                     
+                        # SALVATAGGIO IMMAGINE
+                        if 'attention_map' in debug_info:
+                            self._visualize_and_save_mask(
+                                rgb, 
+                                debug_info['attention_map'], 
+                                epoch, 
+                                batch_idx, 
+                                self.cfg['save_dir'],
+                                mode="val"
+                            )
+                    else:
+                        pred_rot, pred_trans, debug = self.model(images, depths,bb_info,cam_params, return_debug=False)
+
+                    batch_idx += 1
+                    #pred_rot, pred_trans = self.model(images, depths,bb_info,cam_params)
+                    #pred_rot, pred_trans = self.model(images, depths,bb_info,cam_params, mask=masks)
                     
                     current_model_points = self.models_tensor[class_ids.long()]
                     loss, metrics = self.criterion(
