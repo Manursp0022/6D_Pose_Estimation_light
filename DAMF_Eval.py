@@ -10,6 +10,7 @@ from scipy.spatial.transform import Rotation as R
 from models.DFMasked_DualAtt_Net import DenseFusion_Masked_DualAtt_Net
 from models.DFMasked_DualAtt_NetVar import DenseFusion_Masked_DualAtt_NetVar
 from models.DFMasked_DualAtt_NetVarGlobal import DenseFusion_Masked_DualAtt_NetVarGlobal
+from models.DFMasked_DualAtt_NetVarNoMask import DenseFusion_Masked_DualAtt_NetVarNoMask
 
 from utils.Posenet_utils.posenet_dataset_ALL import LineModPoseDataset
 from utils.Posenet_utils.PoseEvaluator import PoseEvaluator 
@@ -105,15 +106,15 @@ class DAMF_Evaluator:
         """Carica il modello DAMF_Net con i pesi addestrati."""
         print("🧠 Loading Masked_DualAtt_Net model...")
         
-        model = DenseFusion_Masked_DualAtt_NetVar(
+        model = DenseFusion_Masked_DualAtt_NetVarNoMask(
             pretrained=False,  # Non servono pesi ImageNet, carichiamo i tuoi
-            temperature=self.cfg.get('temperature', 1.5)
+            temperature=self.cfg.get('temperature', 2.0)
         ).to(self.device)
         
         #weights_path = os.path.join(self.cfg['model_dir'], 'DenseFusion_Masked_DualAttNet_Hard1cm.pth')
         #weights_path = os.path.join(self.cfg['model_dir'], 'DenseFusion_Masked_DualAtt_NetVar_Dropout.pth')
         #weights_path = os.path.join(self.cfg['model_dir'], 'DenseFusion_Masked_DualAtt_NetVarRefinerHard.pth')
-        weights_path = os.path.join(self.cfg['model_dir'], 'DenseFusion_Masked_DualAtt_NetVar_WOAttention_Hard.pth')
+        weights_path = os.path.join(self.cfg['model_dir'], 'DenseFusion_Att_NOMask_Top.pth')
 
         """
         model = DAMF_Net(
@@ -249,7 +250,7 @@ class DAMF_Evaluator:
                 # Estrai dati dal batch
                 rgb_batch = batch['image'].to(self.device)
                 depth_batch = batch['depth'].to(self.device)
-                mask_batch = batch['mask'].to(self.device)
+                #mask_batch = batch['mask'].to(self.device)
                 cam_params = batch['cam_params'].to(self.device, non_blocking=True)
                 bb_info = batch['bbox_norm'].to(self.device, non_blocking=True)
                 gt_translation = batch['translation'].cpu().numpy()  # [B, 3]
@@ -257,7 +258,7 @@ class DAMF_Evaluator:
                 class_ids = batch['class_id'].numpy()  # [B]
                 
                 # 1. INFERENCE del modello
-                pred_quats, pred_trans = self.model(rgb_batch, depth_batch, bb_info, cam_params, mask_batch)
+                pred_quats, pred_trans = self.model(rgb_batch, depth_batch, bb_info, cam_params,return_debug=False) 
                 
                 # 2. Converti quaternioni in matrici di rotazione
                 pred_R = self._quaternion_to_matrix(pred_quats)  # [B, 3, 3]

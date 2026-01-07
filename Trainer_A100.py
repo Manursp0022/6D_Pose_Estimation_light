@@ -328,11 +328,11 @@ class DAMFTurboTrainerA100:
                 active_debug = (batch_idx == 0)
                 # Forward pass
                 if active_debug:
-                    pred_rot, pred_trans, debug = self.model(images, depths,bb_info,cam_params, return_debug=True)                     
+                    pred_rot, pred_trans, debug_info = self.model(images, depths,bb_info,cam_params, return_debug=True)                     
                     # SALVATAGGIO IMMAGINE
                     if 'attention_map' in debug_info:
                         self._visualize_and_save_mask(
-                            rgb, 
+                            images, 
                             debug_info['attention_map'], 
                             epoch, 
                             batch_idx, 
@@ -380,7 +380,7 @@ class DAMFTurboTrainerA100:
         
         return avg_loss, avg_rot, avg_trans
 
-    def validate(self):
+    def validate(self, epoch):
         self.model.eval()
         running_loss = 0.0
         running_rot_loss = 0.0
@@ -407,7 +407,7 @@ class DAMFTurboTrainerA100:
                         # SALVATAGGIO IMMAGINE
                         if 'attention_map' in debug_info:
                             self._visualize_and_save_mask(
-                                rgb, 
+                                images, 
                                 debug_info['attention_map'], 
                                 epoch, 
                                 batch_idx, 
@@ -451,7 +451,7 @@ class DAMFTurboTrainerA100:
         
         for epoch in range(self.cfg['epochs']):
             train_loss, train_rot, train_trans = self.train_epoch(epoch)
-            val_loss, val_rot, val_trans = self.validate()
+            val_loss, val_rot, val_trans = self.validate(epoch)
             
             self.scheduler.step()
             

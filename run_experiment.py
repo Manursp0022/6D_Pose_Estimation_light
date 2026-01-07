@@ -11,6 +11,34 @@ from Trainer_A100 import DAMFTurboTrainerA100
 if __name__ == "__main__":
 
     config = {
+        # Percorsi
+        'dataset_root': "/Users/emanuelerosapepe/Desktop/test_YOLO/Linemod_preprocessed",  # MODIFICA QUESTO
+        'split_val': "data/autosplit_val_ALL.txt",  
+        'model_dir': 'checkpoints/', 
+        'save_dir': 'checkpoints_results/',
+        'model_old': False,
+        'training_mode': 'easy',
+        
+        # Parametri
+        'batch_size': 32,
+        'num_workers': 12,  # 0 su Mac, 4-8 su Linux
+        'temperature': 1.5,  # Stesso usato in training
+    }
+    
+    # Crea directory output
+    os.makedirs(config['save_dir'], exist_ok=True)
+    
+    # Esegui valutazione
+    evaluator = DAMF_Evaluator(config)
+    results = evaluator.run()
+    
+    print("\n✅ Evaluation completed!")
+    print(f"Final Accuracy: {results['accuracy']:.2f}%")
+    print(f"Mean ADD: {results['mean_add_cm']:.2f} cm")
+
+
+    """
+    config = {
         'dataset_root': '/Users/emanuelerosapepe/Desktop/test_YOLO/Linemod_preprocessed',
         'split_train': 'data/autosplit_train_ALL.txt',
         'split_val': 'data/autosplit_val_ALL.txt',
@@ -38,10 +66,10 @@ if __name__ == "__main__":
         # Regularization
         'early_stop_patience': 30
     }
-
+    
     trainer = DAMFTurboTrainerA100(config)
     trainer.run()
-
+    """
     """
     config = {
         # Percorsi
@@ -65,7 +93,6 @@ if __name__ == "__main__":
     print(f"Final Accuracy: {results['accuracy']:.2f}%")
     print(f"Mean ADD: {results['mean_add_cm']:.2f} cm")
     """
-
     """
     config = {
         # Percorsi

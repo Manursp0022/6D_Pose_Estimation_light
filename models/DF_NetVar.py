@@ -20,9 +20,6 @@ class DenseFusion_Masked_DualAtt_NetVarNoMask(nn.Module):
         #to 1 x 1) and the final Fully Connected Layer.
         self.rgb_extractor = nn.Sequential(*list(self.rgb_backbone.children())[:-2]) #
         self.depth_extractor = nn.Sequential(*list(self.depth_backbone.children())[:-2])
-        
-        #self.attention_block = GeometricAttention(in_channels=512)
-        self.attention_block = CrossModalAttention(channels=512)
 
         self.feat_dropout = nn.Dropout2d(p=0.3)
         self.head_dropout = nn.Dropout2d(p=0.15)
@@ -67,11 +64,7 @@ class DenseFusion_Masked_DualAtt_NetVarNoMask(nn.Module):
             nn.Conv2d(128, 1, 1) 
         )
     
-    def _forward_fusion(self, rgb, depth,  mask=None, return_debug=False):
-
-        if mask is not None:
-            rgb = rgb * mask
-            depth = depth * mask
+    def _forward_fusion(self, rgb, depth):
         
         rgb_feat = self.rgb_extractor(rgb)       
         depth_3ch = torch.cat([depth, depth, depth], dim=1)
@@ -79,9 +72,6 @@ class DenseFusion_Masked_DualAtt_NetVarNoMask(nn.Module):
 
         rgb_feat = self.feat_dropout(rgb_feat)
         depth_feat = self.feat_dropout(depth_feat)
-
-        #att_map = self.attention_block(depth_feat) 
-        rgb_clean, depth_clean, soft_mask = self.attention_block(rgb_feat, depth_feat)
         
         # FUSION + RESIDUAL
         combined = torch.cat([rgb_clean, depth_clean], dim=1)
@@ -89,16 +79,12 @@ class DenseFusion_Masked_DualAtt_NetVarNoMask(nn.Module):
         x_res = self.fusion_res(x)
         fused_feat = F.relu(x + x_res) # Residual add & final ReLU
         
-        debug_info = {}
-        if return_debug:
-            debug_info['attention_map'] = soft_mask
-        
-        return fused_feat, rgb_clean, depth_clean, debug_info
+        return fused_feat, rgb_feat, depth_feat, debug_info
 
-    def _weighted_pooling(self, fused_feat, batch_size, rgb_clean, depth_clean, bb_info,cam_params,return_debug=False, debug_info=None):
+    def _weighted_pooling(self, fused_feat, batch_size, rgb_feat, depth_feat, bb_info,cam_params):
         """Logica di pooling intelligente condivisa"""
 
-        rot_input = torch.cat([fused_feat, rgb_clean], dim=1)
+        rot_input = torch.cat([fused_feat, rgb_feat], dim=1)
         pred_rot_map = self.rot_head(rot_input)     # [B, 4, 7, 7]
 
         bb_spatial = bb_info.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, 7, 7)      # [B, 4, 7, 7]
@@ -107,7 +93,7 @@ class DenseFusion_Masked_DualAtt_NetVarNoMask(nn.Module):
         trans_input = torch.cat([fused_feat, bb_spatial, cam_spatial], dim=1) 
         pred_trans_map = self.trans_head(trans_input) # [B, 3, 7, 7]
 
-        conf_input = torch.cat([fused_feat, rgb_clean, bb_spatial, cam_spatial], dim=1) 
+        conf_input = torch.cat([fused_feat, rgb_feat, bb_spatial, cam_spatial], dim=1) 
         conf_logits = self.conf_head(conf_input)   # [B, 1, 7, 7] (Logits)
         
         # Flatten Spatial Dimensions
@@ -131,12 +117,10 @@ class DenseFusion_Masked_DualAtt_NetVarNoMask(nn.Module):
 
         return pred_rot_global, pred_trans_global
 
-    def forward(self, rgb, depth, bb_info, cam_params, mask=None, return_debug=False):
+    def forward(self, rgb, depth, bb_info, cam_params):
         bs = rgb.size(0)
-        fused_feat, rgb_enhanced, depth_enhanced, dbg = self._forward_fusion(rgb, depth, mask, return_debug)
-        pred_r, pred_t = self._weighted_pooling(fused_feat, bs, rgb_enhanced, depth_enhanced,  bb_info, cam_params, return_debug, dbg)
-        
-        if return_debug:
-            return pred_r, pred_t, dbg
+        fused_feat, rgb_enhanced, depth_enhanced = self._forward_fusion(rgb, depth)
+        pred_r, pred_t = self._weighted_pooling(fused_feat, bs, rgb_enhanced, depth_enhanced,  bb_info, cam_params)
+
         return pred_r, pred_t
 
