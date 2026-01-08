@@ -5,7 +5,7 @@ import torchvision.models as models
 from utils.Posenet_utils.attention import GeometricAttention 
 from utils.Posenet_utils.CrossModalAttention import CrossModalAttention
 
-class DenseFusion_Masked_DualAtt_NetVarNoMask(nn.Module):
+class DenseFusion_NetVar(nn.Module):
     def __init__(self, pretrained=True, temperature=2.0):
         super().__init__()
         
@@ -74,12 +74,12 @@ class DenseFusion_Masked_DualAtt_NetVarNoMask(nn.Module):
         depth_feat = self.feat_dropout(depth_feat)
         
         # FUSION + RESIDUAL
-        combined = torch.cat([rgb_clean, depth_clean], dim=1)
+        combined = torch.cat([rgb_feat, depth_feat], dim=1)
         x = self.fusion_entry(combined)
         x_res = self.fusion_res(x)
         fused_feat = F.relu(x + x_res) # Residual add & final ReLU
         
-        return fused_feat, rgb_feat, depth_feat, debug_info
+        return fused_feat, rgb_feat, depth_feat
 
     def _weighted_pooling(self, fused_feat, batch_size, rgb_feat, depth_feat, bb_info,cam_params):
         """Logica di pooling intelligente condivisa"""

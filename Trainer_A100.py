@@ -15,7 +15,7 @@ from utils.Posenet_utils.posenet_dataset_AltMasked import LineModPoseDataset_Alt
 from utils.Posenet_utils.DenseFusion_Loss_log import DenseFusionLoss
 
 from models.DFMasked_DualAtt_Net import DenseFusion_Masked_DualAtt_Net
-
+from models.models/DFMasked_DualAtt_NetVarNoMask import 
 from models.DFMasked_DualAtt_NetVar import DenseFusion_Masked_DualAtt_NetVar
 from models.DFMasked_DualAtt_NetVarGlobal import DenseFusion_Masked_DualAtt_NetVarGlobal
 from models.DFMasked_DualAtt_NetVarNoMask import DenseFusion_Masked_DualAtt_NetVarNoMask
@@ -476,7 +476,7 @@ class DAMFTurboTrainerA100:
                 self.best_val_loss = val_loss
                 early_stop_counter = 0
                 
-                path = os.path.join(self.cfg['save_dir'], 'DenseFusion_Masked_DualAtt_NetVar_WOAttention.pth')
+                path = os.path.join(self.cfg['save_dir'], 'DenseFusion_NoMask_Crossatt.pth')
                 torch.save({
                     'epoch': epoch,
                     'model_state_dict': self.model.state_dict(),

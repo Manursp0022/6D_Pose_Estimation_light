@@ -6,16 +6,20 @@ from tqdm import tqdm
 from torch.utils.data import DataLoader
 from plyfile import PlyData
 from scipy.spatial.transform import Rotation as R
+from torchvision import transforms
+from ultralytics import YOLO
+import cv2
 #from models.DFMasked_DualAtt_NetVar_WRefiner import DenseFusion_Masked_DualAtt_NetVarWRef
 from models.DFMasked_DualAtt_Net import DenseFusion_Masked_DualAtt_Net
 from models.DFMasked_DualAtt_NetVar import DenseFusion_Masked_DualAtt_NetVar
 from models.DFMasked_DualAtt_NetVarGlobal import DenseFusion_Masked_DualAtt_NetVarGlobal
 from models.DFMasked_DualAtt_NetVarNoMask import DenseFusion_Masked_DualAtt_NetVarNoMask
-
+from models.DF_NetVar import DenseFusion_NetVar
 from utils.Posenet_utils.posenet_dataset_ALL import LineModPoseDataset
 from utils.Posenet_utils.PoseEvaluator import PoseEvaluator 
 from utils.Posenet_utils.posenet_dataset_AltMasked import LineModPoseDataset_AltMasked
 from utils.Posenet_utils.posenet_dataset_ALLMasked import LineModPoseDatasetMasked
+from utils.Posenet_utils.utils_geometric import crop_square_resize
 
 class DAMF_Evaluator:
     
@@ -48,13 +52,59 @@ class DAMF_Evaluator:
             12: "Holepuncher", 13: "Iron", 14: "Lamp", 15: "Phone"
         }
 
+        self.LINEMOD_TO_YOLO = {
+            1 : 0,   # Ape
+            2 : 1,   # Benchvise
+            4 : 2,   # Cam
+            5 : 3,   # Can
+            6 : 4,   # Cat
+            8 : 5,   # Driller
+            9 : 6,   # Duck
+            10 : 7,  # Eggbox
+            11 : 8,  # Glue
+            12 : 9,  # Holepuncher
+            13 : 10, # Iron
+            14 : 11, # Lamp
+            15 : 12  # Phone
+        }
+
+        # Camera intrinsics FISSE (LineMOD)
+        self.cam_params_norm = torch.tensor([
+            572.4114 / 640,   # fx_norm
+            573.57043 / 480,  # fy_norm
+            325.2611 / 640,   # cx_norm
+            242.04899 / 480   # cy_norm
+        ], dtype=torch.float32)
+
+        self.img_h, self.img_w = 480, 640
+        self.img_size = 224
+
+        self.transform = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        ])
+
+        self.YOLO_CONF = 0.5
+
         # Setup
+        self.yolo_model = self._setup_yolo()
         self.val_loader = self._setup_data()
         self.models_3d = self._load_3d_models()
         self.model = self._setup_model()
         
         # Metric calculator (la camera intrinsics non serve per ADD, solo per PnP)
         self.metric_calculator = PoseEvaluator(np.eye(3))
+    def _setup_yolo(self):
+        """Carica il modello YOLO per segmentazione."""
+        print("🔍 Loading yolov8n: Detction Model...")
+        
+        yolo_path = self.cfg['yolo_model_path']
+        if not os.path.exists(yolo_path):
+            raise FileNotFoundError(f"❌ YOLO model not found at: {yolo_path}")
+        
+        model = YOLO(yolo_path)
+        print(f"   ✓ Loaded YOLO from: {yolo_path}")
+        return model
 
     def _get_device(self):
         """Selezione automatica del device migliore disponibile."""
@@ -105,16 +155,24 @@ class DAMF_Evaluator:
     def _setup_model(self):
         """Carica il modello DAMF_Net con i pesi addestrati."""
         print("🧠 Loading Masked_DualAtt_Net model...")
-        
         model = DenseFusion_Masked_DualAtt_NetVarNoMask(
+            pretrained=False,  # Non servono pesi ImageNet, carichiamo i tuoi
+            temperature=self.cfg.get('temperature', 1.5)
+        ).to(self.device)
+        """
+        model = DenseFusion_NetVar(
             pretrained=False,  # Non servono pesi ImageNet, carichiamo i tuoi
             temperature=self.cfg.get('temperature', 2.0)
         ).to(self.device)
+        """
+        DenseFusion_NetVar
         
         #weights_path = os.path.join(self.cfg['model_dir'], 'DenseFusion_Masked_DualAttNet_Hard1cm.pth')
         #weights_path = os.path.join(self.cfg['model_dir'], 'DenseFusion_Masked_DualAtt_NetVar_Dropout.pth')
         #weights_path = os.path.join(self.cfg['model_dir'], 'DenseFusion_Masked_DualAtt_NetVarRefinerHard.pth')
         weights_path = os.path.join(self.cfg['model_dir'], 'DenseFusion_Att_NOMask_Top.pth')
+        #weights_path = os.path.join(self.cfg['model_dir'], 'DenseFusion__NetVar.pth')
+
 
         """
         model = DAMF_Net(
@@ -209,6 +267,81 @@ class DAMF_Evaluator:
         
         return R.from_quat(quats_scipy).as_matrix()
 
+    def _calculate_iou(self, mask1, mask2):
+        """
+        Calcola Intersection over Union tra due maschere binarie (numpy arrays).
+        """
+        # Assicuriamoci che siano booleani o 0/1
+        m1 = (mask1 > 0).astype(bool)
+        m2 = (mask2 > 0).astype(bool)
+        
+        intersection = np.logical_and(m1, m2).sum()
+        union = np.logical_or(m1, m2).sum()
+        
+        if union == 0:
+            return 0.0
+        return (intersection / union) * 100.0
+
+    
+    def _process_yolo_batch_wIoU(self, rgb_paths, depth_paths, class_ids):
+        batch_size = len(rgb_paths)
+        
+        rgb_list = []
+        depth_list = []
+        mask_list = []
+        bbox_list = []
+        valid_indices = []
+        
+        yolo_results = self.yolo_model(list(rgb_paths), conf=self.YOLO_CONF, verbose=False)
+        
+        for i in range(batch_size):
+            rgb_path = rgb_paths[i]
+            depth_path = depth_paths[i]
+            obj_id = int(class_ids[i])
+            target_yolo_class = self.LINEMOD_TO_YOLO[obj_id]
+
+            yolo_res = yolo_results[i]
+            
+            # Trova best box
+            boxes = yolo_res.boxes
+            best_idx = None
+            best_conf = 0.0
+            for j, (cls, conf) in enumerate(zip(boxes.cls, boxes.conf)):
+                if int(cls) == target_yolo_class and float(conf) > best_conf:
+                    best_conf = float(conf)
+                    best_idx = j
+            
+            if best_idx is None:
+                continue
+
+            rgb_img = cv2.cvtColor(cv2.imread(rgb_path), cv2.COLOR_BGR2RGB)
+            depth_img = cv2.imread(depth_path, cv2.IMREAD_UNCHANGED).astype(np.float32) / 1000.0
+            
+            xyxy = boxes.xyxy[best_idx].cpu().numpy()
+            bbox = [xyxy[0], xyxy[1], xyxy[2] - xyxy[0], xyxy[3] - xyxy[1]]
+
+            # Crop & Resize (Come prima)
+            rgb_crop = crop_square_resize(rgb_img, bbox, self.img_size, is_depth=False)
+            depth_crop = crop_square_resize(depth_img, bbox, self.img_size, is_depth=True)
+            
+            rgb_list.append(self.transform(rgb_crop))
+            depth_list.append(torch.from_numpy(depth_crop).float().unsqueeze(0))
+
+            x, y, w, h = bbox
+            bbox_norm = torch.tensor([(x + w/2) / self.img_w, (y + h/2) / self.img_h, w / self.img_w, h / self.img_h], dtype=torch.float32)
+            bbox_list.append(bbox_norm)
+            valid_indices.append(i)
+        
+        if len(valid_indices) == 0:
+            return None, None, None, None, [], [] # Aggiungi lista vuota per IoU
+        
+        rgb_batch = torch.stack(rgb_list)
+        depth_batch = torch.stack(depth_list)
+        bbox_batch = torch.stack(bbox_list)
+        
+        return rgb_batch, depth_batch, bbox_batch, valid_indices # Ritorna anche IoU
+
+    
     def run(self):
         """
         Esegue la valutazione completa sul validation set.
@@ -223,7 +356,8 @@ class DAMF_Evaluator:
             obj_id: {
                 'correct': 0,
                 'total': 0,
-                'errors': []  # in cm
+                'errors': [] , 
+                'yolo_missed': 0 
             } 
             for obj_id in self.DIAMETERS.keys()
         }
@@ -235,6 +369,7 @@ class DAMF_Evaluator:
         # Statistiche globali
         total_correct = 0
         total_predictions = 0
+        total_yolo_missed = 0
         all_errors = []  # in cm
 
         # --- NUOVO: Liste per X, Y, Z ---
@@ -248,29 +383,66 @@ class DAMF_Evaluator:
             for batch in tqdm(self.val_loader, desc="Evaluating"):
                 
                 # Estrai dati dal batch
-                rgb_batch = batch['image'].to(self.device)
-                depth_batch = batch['depth'].to(self.device)
+                #rgb_batch = batch['image'].to(self.device)
                 #mask_batch = batch['mask'].to(self.device)
-                cam_params = batch['cam_params'].to(self.device, non_blocking=True)
-                bb_info = batch['bbox_norm'].to(self.device, non_blocking=True)
+
+                paths = batch['path']
+                depth_paths = batch['depth_path']
+                depth_batch = batch['depth']#.to(self.device)
+                #cam_params = batch['cam_params']#.to(self.device, non_blocking=True)
+                #bb_info = batch['bbox_norm'].to(self.device, non_blocking=True)
                 gt_translation = batch['translation'].cpu().numpy()  # [B, 3]
                 gt_quats = batch['quaternion']  # [B, 4]
                 class_ids = batch['class_id'].numpy()  # [B]
+
+                # Processa con YOLO (ritorna solo sample validi)
+                rgb_batch, depth_batch, bbox_batch, valid_indices = self._process_yolo_batch_wIoU(
+                    paths, depth_paths, class_ids
+                )
+
+                # Conta YOLO misses per questo batch
+                batch_size = len(paths)
+                num_valid = len(valid_indices)
+                num_missed = batch_size - num_valid
+                total_yolo_missed += num_missed
+                
+                # Aggiorna yolo_missed per classe
+                for i in range(batch_size):
+                    if i not in valid_indices:
+                        obj_id = int(class_ids[i])
+                        if obj_id in class_stats:
+                            class_stats[obj_id]['yolo_missed'] += 1
+                
+                # Se nessun sample valido, skip batch
+                if num_valid == 0:
+                    continue
+
+                rgb_batch = rgb_batch.to(self.device)
+                depth_batch = depth_batch.to(self.device)
+                bbox_batch = bbox_batch.to(self.device)
+
+                B = rgb_batch.shape[0]
+                cam_params = self.cam_params_norm.unsqueeze(0).repeat(B, 1).to(self.device)
+
                 
                 # 1. INFERENCE del modello
-                pred_quats, pred_trans = self.model(rgb_batch, depth_batch, bb_info, cam_params,return_debug=False) 
+                pred_quats, pred_trans = self.model(rgb_batch, depth_batch, bbox_batch, cam_params)
                 
                 # 2. Converti quaternioni in matrici di rotazione
                 pred_R = self._quaternion_to_matrix(pred_quats)  # [B, 3, 3]
-                gt_R = self._quaternion_to_matrix(gt_quats)  # [B, 3, 3]
-                
+
+                valid_gt_quats = gt_quats[valid_indices]
+                valid_gt_trans = gt_translation[valid_indices]
+                valid_class_ids = class_ids[valid_indices]
+
+                gt_R = self._quaternion_to_matrix(valid_gt_quats)  # [B, 3, 3]
                 pred_t = pred_trans.cpu().numpy()  # [B, 3]
                 
                 batch_size = rgb_batch.shape[0]
                 
                 # 3. Calcola ADD per ogni sample nel batch
-                for i in range(batch_size):
-                    obj_id = int(class_ids[i])
+                for i in range(B):
+                    obj_id = int(valid_class_ids[i])
                     
                     # Salta se non abbiamo il modello 3D
                     if obj_id not in self.models_3d:
@@ -296,7 +468,7 @@ class DAMF_Evaluator:
                     all_rot_errors_m.append(r_err_m * 100.0)    # Convert to cm
                     all_rot_errors_deg.append(r_err_deg)
 
-                    # --- NUOVO: Append errori assi (convertiti in cm) ---
+                    # Append errori assi (convertiti in cm) ---
                     all_tx_errors.append(tx * 100.0)
                     all_ty_errors.append(ty * 100.0)
                     all_tz_errors.append(tz * 100.0)
@@ -325,7 +497,6 @@ class DAMF_Evaluator:
         # 4. Calcola metriche finali
         accuracy = (total_correct / total_predictions * 100.0) if total_predictions > 0 else 0.0
         mean_add_cm = np.mean(all_errors) if len(all_errors) > 0 else 0.0
-        mean_add_cm = np.mean(all_errors) if len(all_errors) > 0 else 0.0
         median_add_cm = np.median(all_errors) if len(all_errors) > 0 else 0.0
 
         mean_trans = np.mean(all_trans_errors) if len(all_trans_errors) > 0 else 0.0
@@ -335,13 +506,11 @@ class DAMF_Evaluator:
         mean_tx = np.mean(all_tx_errors) if len(all_tx_errors) > 0 else 0.0
         mean_ty = np.mean(all_ty_errors) if len(all_ty_errors) > 0 else 0.0
         mean_tz = np.mean(all_tz_errors) if len(all_tz_errors) > 0 else 0.0
-        
+
         # 5. Stampa report
-        self._print_report(accuracy, mean_add_cm, mean_trans, mean_rot_cm, mean_rot_deg, 
-                           mean_tx, mean_ty, mean_tz,  # <--- Nuovi argomenti
-                           total_predictions, class_stats) # <--- Fix class_stats        
+        self._print_report(accuracy, mean_add_cm, mean_trans, mean_rot_cm, mean_rot_deg, mean_tx, mean_ty, mean_tz, total_predictions,total_yolo_missed, class_stats)    
         # 6. Genera plot
-        self._plot_results(class_stats)
+        self._plot_results(class_stats) 
         
         return {
             'accuracy': accuracy,
@@ -353,43 +522,42 @@ class DAMF_Evaluator:
             'class_stats': class_stats
         }
 
-    def _print_report(self, accuracy, mean_add, mean_trans, mean_rot_cm, mean_rot_deg, 
-                    mean_tx, mean_ty, mean_tz, # <--- Nuovi parametri
-                    total, class_stats):       # <--- Fix parametro mancante
-        
+    def _print_report(self, accuracy, mean_add, mean_trans, mean_rot_cm, mean_rot_deg, mean_tx, mean_ty, mean_tz,total, total_yolo_missed, class_stats):
         print("\n" + "="*60)
         print("FINAL REPORT (Detailed Breakdown)")
         print("="*60)
         print(f" Samples Evaluated: {total}")
+        print(f" YOLO Missed: {total_yolo_missed}")
+        total_samples = total + total_yolo_missed
+        yolo_det_rate = (total / total_samples * 100.0) if total_samples > 0 else 0.0
+        print(f" YOLO Detection Rate: {yolo_det_rate:.2f}%")
         print("-" * 40)
         print(f" TOTAL ACCURACY:    {accuracy:.2f} %")
         print(f" COMBINED ADD Error:{mean_add:.2f} cm")
         print("-" * 40)
         print(" ERROR BREAKDOWN:")
         print(f" -> Translation (Total): {mean_trans:.2f} cm")
-        # --- NUOVO: Stampa dettagliata X, Y, Z ---
         print(f"    |-> Err X: {mean_tx:.2f} cm")
         print(f"    |-> Err Y: {mean_ty:.2f} cm")
         print(f"    |-> Err Z: {mean_tz:.2f} cm (Depth)")
-        # -----------------------------------------
         print(f" -> Rotation (Mesh):     {mean_rot_cm:.2f} cm")
         print(f" -> Rotation (Angle):    {mean_rot_deg:.2f} deg")
         print("="*60)
-        
-        # Loop per classe (Fix name error)
-        print(f"{'OBJECT':<15} {'COUNT':<10} {'ACCURACY':<10} {'MEAN ERR (cm)':<15}")
+        # Loop per classe con YOLO missed
+        print(f"{'OBJECT':<12} {'COUNT':<8} {'MISSED':<8} {'ACCURACY':<10} {'MEAN ERR (cm)':<12}")
         print("-" * 60)
         for obj_id in sorted(list(class_stats.keys())):
             stats = class_stats[obj_id]
-            if stats['total'] == 0:
+            if stats['total'] == 0 and stats.get('yolo_missed', 0) == 0:
                 continue
                 
             obj_name = self.OBJ_NAMES.get(obj_id, f"obj_{obj_id}")
-            acc = (stats['correct'] / stats['total']) * 100.0
-            avg_err = np.mean(stats['errors']) * 100
+            acc = (stats['correct'] / stats['total']) * 100.0 if stats['total'] > 0 else 0.0
+            avg_err = np.mean(stats['errors']) * 100 if len(stats['errors']) > 0 else 0.0
+            missed = stats.get('yolo_missed', 0)
             
-            print(f"{obj_name:<15} {stats['total']:<10} {acc:>6.2f}%      {avg_err:>8.2f}")
-        
+            print(f"{obj_name:<12} {stats['total']:<8} {missed:<8} {acc:>6.2f}%      {avg_err:>8.2f}")
+
         print("="*70 + "\n")
 
     def _plot_results(self, class_stats):

@@ -3,8 +3,8 @@
 import os
 import re
 import torch
-from DAMF_Eval import DAMF_Evaluator
-from DAMF_Eval_WYOLO import DAMF_Evaluator_WYolo
+from DAMF_Eval_NoMask import DAMF_Evaluator
+from DAMF_Eval_WMask import DAMF_Evaluator_WMask
 from PoseNet_evaluation import PoseNetEvaluator
 from Trainer_A100 import DAMFTurboTrainerA100
 
@@ -12,24 +12,23 @@ if __name__ == "__main__":
 
     config = {
         # Percorsi
-        'dataset_root': "/Users/emanuelerosapepe/Desktop/test_YOLO/Linemod_preprocessed",  # MODIFICA QUESTO
+        'dataset_root': "/Users/emanuelerosapepe/Desktop/test_YOLO/Linemod_preprocessed",  
         'split_val': "data/autosplit_val_ALL.txt",  
         'model_dir': 'checkpoints/', 
         'save_dir': 'checkpoints_results/',
         'model_old': False,
-        'training_mode': 'easy',
-        
+        'training_mode': 'hard',
+        'yolo_model_path': 'checkpoints/best_seg_YOLO.pt' ,
         # Parametri
         'batch_size': 32,
         'num_workers': 12,  # 0 su Mac, 4-8 su Linux
-        'temperature': 1.5,  # Stesso usato in training
     }
     
     # Crea directory output
     os.makedirs(config['save_dir'], exist_ok=True)
     
     # Esegui valutazione
-    evaluator = DAMF_Evaluator(config)
+    evaluator = DAMF_Evaluator_WMask(config)
     results = evaluator.run()
     
     print("\n✅ Evaluation completed!")

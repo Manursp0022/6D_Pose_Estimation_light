@@ -444,6 +444,7 @@ class LineModPoseDataset_AltMasked(Dataset):
             'translation': trans_tensor,
             'class_id': target_obj_id,
             'path': sample['img_path'],
+            'depth_path': sample['depth_path'],
             'bbox_norm': torch.tensor(bbox_norm, dtype=torch.float32),
             'cam_params': cam_params
         }

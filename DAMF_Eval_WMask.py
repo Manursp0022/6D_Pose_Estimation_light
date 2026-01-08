@@ -20,7 +20,7 @@ from utils.Posenet_utils.posenet_dataset_AltMasked import LineModPoseDataset_Alt
 from utils.Posenet_utils.posenet_dataset_ALLMasked import LineModPoseDatasetMasked
 from utils.Posenet_utils.utils_geometric import crop_square_resize
 
-class DAMF_Evaluator_WYolo:
+class DAMF_Evaluator_WMask:
     
     def __init__(self, config):
         self.cfg = config
@@ -159,13 +159,15 @@ class DAMF_Evaluator_WYolo:
         
         model = DenseFusion_Masked_DualAtt_NetVar(
             pretrained=False,  # Non servono pesi ImageNet, carichiamo i tuoi
-            temperature=self.cfg.get('temperature', 2.0)
+            temperature=self.cfg.get('temperature', 1.5)
         ).to(self.device)
         
         #weights_path = os.path.join(self.cfg['model_dir'], 'DenseFusion_Masked_DualAttNet_Hard1cm.pth')
         #weights_path = os.path.join(self.cfg['model_dir'], 'DenseFusion_Masked_DualAtt_NetVar_Dropout.pth')
         #weights_path = os.path.join(self.cfg['model_dir'], 'DenseFusion_Masked_DualAtt_NetVarRefinerHard.pth')
-        weights_path = os.path.join(self.cfg['model_dir'], 'DenseFusion_Masked_DualAtt_NetVar_WOAttention.pth')
+        #weights_path = os.path.join(self.cfg['model_dir'], 'DenseFusion_Masked_DualAtt_NetVar_WOAttention.pth')
+        weights_path = os.path.join(self.cfg['model_dir'], 'DenseFusion_Masked_DualAtt_NetVar_WOAttention_Hard.pth')
+
         """
         model = DAMF_Net(
             pretrained=False,  # Non servono pesi ImageNet, carichiamo i tuoi
@@ -653,6 +655,7 @@ class DAMF_Evaluator_WYolo:
             'mean_rot_deg': mean_rot_deg,
             'class_stats': class_stats
         }
+        
     def _print_report(self, accuracy, mean_add, mean_trans, mean_rot_cm, mean_rot_deg, 
                         mean_tx, mean_ty, mean_tz,
                         total, total_yolo_missed, class_stats):
