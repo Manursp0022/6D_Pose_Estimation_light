@@ -20,7 +20,7 @@ class DenseFusion_Masked_DualAtt_NetVar(nn.Module):
         self.rgb_extractor = nn.Sequential(*list(self.rgb_backbone.children())[:-2]) #
         self.depth_extractor = nn.Sequential(*list(self.depth_backbone.children())[:-2])
         
-        #self.attention_block = GeometricAttention(in_channels=512)
+        self.attention_block = GeometricAttention(in_channels=512)
 
         self.feat_dropout = nn.Dropout2d(p=0.3)
         self.head_dropout = nn.Dropout2d(p=0.15)
@@ -77,13 +77,14 @@ class DenseFusion_Masked_DualAtt_NetVar(nn.Module):
         rgb_feat = self.feat_dropout(rgb_feat)
         depth_feat = self.feat_dropout(depth_feat)
 
-        #att_map = self.attention_block(depth_feat) 
+        att_map = self.attention_block(depth_feat) 
 
         # RESIDUAL ATTENTION: (1 + att), to not lose signal
-        #rgb_enhanced = rgb_feat * (1 + att_map)  
-        #depth_enhanced = depth_feat * (1 + att_map) #[B, 512, 7, 7]
-        rgb_enhanced = rgb_feat 
-        depth_enhanced = depth_feat 
+        rgb_enhanced = rgb_feat * (1 + att_map)  
+        depth_enhanced = depth_feat * (1 + att_map) #[B, 512, 7, 7]
+
+        #rgb_enhanced = rgb_feat 
+        #depth_enhanced = depth_feat 
         
         # FUSION + RESIDUAL
         combined = torch.cat([rgb_enhanced, depth_enhanced], dim=1)

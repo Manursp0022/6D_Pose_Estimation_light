@@ -19,6 +19,7 @@ if __name__ == "__main__":
         'model_old': False,
         'training_mode': 'hard',
         'yolo_model_path': 'checkpoints/best_seg_YOLO.pt' ,
+        'temperature': 2.0,
         # Parametri
         'batch_size': 32,
         'num_workers': 12,  # 0 su Mac, 4-8 su Linux

@@ -15,7 +15,7 @@ from utils.Posenet_utils.posenet_dataset_AltMasked import LineModPoseDataset_Alt
 from utils.Posenet_utils.DenseFusion_Loss_log import DenseFusionLoss
 
 from models.DFMasked_DualAtt_Net import DenseFusion_Masked_DualAtt_Net
-from models.models/DFMasked_DualAtt_NetVarNoMask import 
+#from models.DFMasked_DualAtt_NetVarNoMask import DFMasked_DualAtt_NetVarNoMask
 from models.DFMasked_DualAtt_NetVar import DenseFusion_Masked_DualAtt_NetVar
 from models.DFMasked_DualAtt_NetVarGlobal import DenseFusion_Masked_DualAtt_NetVarGlobal
 from models.DFMasked_DualAtt_NetVarNoMask import DenseFusion_Masked_DualAtt_NetVarNoMask
