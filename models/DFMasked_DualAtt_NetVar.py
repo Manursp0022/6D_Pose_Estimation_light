@@ -65,7 +65,7 @@ class DenseFusion_Masked_DualAtt_NetVar(nn.Module):
             nn.Conv2d(128, 1, 1) 
         )
     
-    def _forward_fusion(self, rgb, depth, mask=None, return_debug=False):
+    def _forward_fusion(self, rgb, depth, mask=None, return_debug=True):
         if mask is not None:
             rgb = rgb * mask
             depth = depth * mask
@@ -77,14 +77,14 @@ class DenseFusion_Masked_DualAtt_NetVar(nn.Module):
         rgb_feat = self.feat_dropout(rgb_feat)
         depth_feat = self.feat_dropout(depth_feat)
 
-        #att_map = self.attention_block(depth_feat) 
+        att_map = self.attention_block(depth_feat) 
 
         # RESIDUAL ATTENTION: (1 + att), to not lose signal
-        #rgb_enhanced = rgb_feat * (1 + att_map)  
-        #depth_enhanced = depth_feat * (1 + att_map) #[B, 512, 7, 7]
+        rgb_enhanced = rgb_feat * (1 + att_map)  
+        depth_enhanced = depth_feat * (1 + att_map) #[B, 512, 7, 7]
 
-        rgb_enhanced = rgb_feat 
-        depth_enhanced = depth_feat 
+        #rgb_enhanced = rgb_feat 
+        #depth_enhanced = depth_feat 
         
         # FUSION + RESIDUAL
         combined = torch.cat([rgb_enhanced, depth_enhanced], dim=1)
@@ -94,13 +94,11 @@ class DenseFusion_Masked_DualAtt_NetVar(nn.Module):
         
         debug_info = {}
         if return_debug:
-            debug_info['att_max_rgb']  = att_map.max().item()
-            debug_info['att_min_rgb']  = att_map.min().item()
-            debug_info['att_std_rgb']  = att_map.std().item()
+            debug_info['attention_map'] = att_map
         
         return fused_feat, rgb_enhanced, depth_enhanced, debug_info
 
-    def _weighted_pooling(self, fused_feat, batch_size, rgb_enhanced, depth_enhanced, bb_info,cam_params,return_debug=False, debug_info=None):
+    def _weighted_pooling(self, fused_feat, batch_size, rgb_enhanced, depth_enhanced, bb_info, cam_params):
         """Logica di pooling intelligente condivisa"""
 
         rot_input = torch.cat([fused_feat, rgb_enhanced], dim=1)
@@ -133,21 +131,15 @@ class DenseFusion_Masked_DualAtt_NetVar(nn.Module):
         
         # Final Normalize
         pred_rot_global = F.normalize(pred_rot_global + self.eps, p=2, dim=1)
-        
 
-        if return_debug and debug_info is not None:
-            debug_info['conf_max'] = weights.max().item()
-            debug_info['conf_mean'] = weights.mean().item()
-            debug_info['conf_std'] = weights.std().item()
+        return pred_rot_global, pred_trans_global
 
-        return pred_rot_global, pred_trans_global, debug_info
-
-    def forward(self, rgb, depth,bb_info, cam_params, mask=None, return_debug=False):
+    def forward(self, rgb, depth,bb_info, cam_params, mask=None, return_debug=True):
         bs = rgb.size(0)
         fused_feat, rgb_enhanced, depth_enhanced, dbg = self._forward_fusion(rgb, depth, mask, return_debug)
-        pred_r, pred_t, dbg_final = self._weighted_pooling(fused_feat, bs, rgb_enhanced, depth_enhanced,  bb_info, cam_params, return_debug, dbg)
+        pred_r, pred_t = self._weighted_pooling(fused_feat, bs, rgb_enhanced, depth_enhanced,  bb_info, cam_params)
         
         if return_debug:
-            return pred_r, pred_t, dbg_final
+            return pred_r, pred_t, dbg
         return pred_r, pred_t
 

@@ -38,7 +38,7 @@ class DAMFTurboTrainerA100:
         ).to(self.device)
         """
         print("Initializing  DenseFusion_Masked_DualAtt_NetVarNoMask (A100 Optimized)...")
-        self.model = DenseFusion_Masked_DualAtt_NetVarNoMask(
+        self.model =  DenseFusion_Masked_DualAtt_NetVar(
             pretrained=True, 
             temperature=self.cfg['temperature']
         ).to(self.device)
@@ -70,8 +70,9 @@ class DAMFTurboTrainerA100:
                 raise FileNotFoundError(f"Checkpoint not found at {self.cfg['resume_from']}")
         
         try:
-            print("Compiling model with torch.compile()...")
-            self.model = torch.compile(self.model, mode='reduce-overhead')
+            if torch.cuda.is_available():
+                print("Compiling model with torch.compile()...")
+                self.model = torch.compile(self.model, mode='reduce-overhead')
         except Exception as e:
             print(f"Torch compile failed (ignore if not PyTorch 2.0): {e}")
 
@@ -270,8 +271,7 @@ class DAMFTurboTrainerA100:
         img = np.clip(img, 0, 1)
 
         # Mask: [1, 7, 7] -> [7, 7]
-        mask = soft_mask[0, 0].detach().cpu().numpy()
-        
+        mask = soft_mask[0, 0].detach().cpu().float().numpy()        
         # Upscale della maschera alla dimensione dell'immagine
         # Usa INTER_CUBIC per vederla "sfumata" (come una heatmap reale)
         mask_resized = cv2.resize(mask, (img.shape[1], img.shape[0]), interpolation=cv2.INTER_CUBIC)
@@ -340,7 +340,7 @@ class DAMFTurboTrainerA100:
                             mode="train"
                         )
                 else:
-                    pred_rot, pred_trans, debug = self.model(images, depths,bb_info,cam_params, return_debug=True) 
+                    pred_rot, pred_trans, debug_info = self.model(images, depths,bb_info,cam_params, return_debug=True) 
 
                 batch_idx += 1                    
 
@@ -403,7 +403,7 @@ class DAMFTurboTrainerA100:
 
                     # Forward pass
                     if active_debug:
-                        pred_rot, pred_trans, debug = self.model(images, depths,bb_info,cam_params, return_debug=True)                     
+                        pred_rot, pred_trans, debug_info = self.model(images, depths,bb_info,cam_params, return_debug=True)                     
                         # SALVATAGGIO IMMAGINE
                         if 'attention_map' in debug_info:
                             self._visualize_and_save_mask(
@@ -415,7 +415,7 @@ class DAMFTurboTrainerA100:
                                 mode="val"
                             )
                     else:
-                        pred_rot, pred_trans, debug = self.model(images, depths,bb_info,cam_params, return_debug=True)
+                        pred_rot, pred_trans, debug_info = self.model(images, depths,bb_info,cam_params, return_debug=True)
 
                     batch_idx += 1
                     #pred_rot, pred_trans = self.model(images, depths,bb_info,cam_params)
