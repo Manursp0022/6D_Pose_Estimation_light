@@ -136,10 +136,10 @@ class DenseFusion_Masked_DualAtt_NetVar(nn.Module):
 
     def forward(self, rgb, depth,bb_info, cam_params, mask=None, return_debug=True):
         bs = rgb.size(0)
-        fused_feat, rgb_enhanced, depth_enhanced, dbg = self._forward_fusion(rgb, depth, mask, return_debug)
+        fused_feat, rgb_enhanced, depth_enhanced, dbg_info = self._forward_fusion(rgb, depth, mask, return_debug)
         pred_r, pred_t = self._weighted_pooling(fused_feat, bs, rgb_enhanced, depth_enhanced,  bb_info, cam_params)
         
         if return_debug:
-            return pred_r, pred_t, dbg
+            return pred_r, pred_t, dbg_info 
         return pred_r, pred_t
 

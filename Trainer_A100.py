@@ -149,32 +149,6 @@ class DAMFTurboTrainerA100:
             new_key = key.replace('_orig_mod.', '') if key.startswith('_orig_mod.') else key
             new_state_dict[new_key] = value
         return new_state_dict
-
-
-    def _setup_separate_optimizer(self):
-        """
-        Setup optimizer con learning rates differenziati:
-        - Backbone pretrained: LR più basso (fine-tuning)
-        - Heads e fusion: LR normale (training from scratch)
-        """
-        backbone_params = []
-        head_params = []
-        
-        # Separa parametri backbone vs heads
-        for name, param in self.model.named_parameters():
-            if 'rgb_backbone' in name or 'depth_backbone' in name or 'rgb_layer' in name or 'depth_layer' in name:
-                backbone_params.append(param)
-            else:
-                head_params.append(param)
-        
-        base_lr = self.cfg.get('lr', 1e-4)
-        backbone_lr = base_lr * 0.1  # 10x più lento per backbone pretrained
-        
-        #print(f"Optimizer Setup: Backbone LR={backbone_lr:.2e}, Heads LR={base_lr:.2e}")
-        optimizer = optim.AdamW([
-            {'params': backbone_params, 'lr': backbone_lr, 'weight_decay': 1e-3}, # Alza weight decay qui
-            {'params': head_params, 'lr': base_lr, 'weight_decay': 1e-4}
-        ])
         
         return optimizer
 
