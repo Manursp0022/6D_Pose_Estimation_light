@@ -3,26 +3,25 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class CrossModalAttention(nn.Module):
-    def __init__(self, channels=512, reduction=16, prior_strength=0.4):
+    def __init__(self, channels=512, reduction=16):
         super().__init__()
-        
-        self.prior_strength = prior_strength  # Quanto pesa il prior (0 = niente, 1 = solo prior)
-        
-        # Creiamo il prior gaussiano centrato (verrà registrato come buffer, non come parametro)
-        self.register_buffer('gaussian_prior', self._create_gaussian_prior(7, 7))
         
         self.channel_reducer = nn.Sequential(
             nn.Conv2d(channels * 2, channels // reduction, kernel_size=1),
             nn.ReLU(inplace=True)
         )
         
+        # 2. Spatial Attention Map Generator
+        # Guarda il contesto locale (7x7) combinato
         self.spatial_gate = nn.Sequential(
             nn.Conv2d(channels // reduction, channels // reduction, kernel_size=3, padding=1),
             nn.ReLU(inplace=True),
-            nn.Conv2d(channels // reduction, 1, kernel_size=1),
-            # Nota: Rimuoviamo Sigmoid qui, la applichiamo dopo aver combinato col prior
+            nn.Conv2d(channels // reduction, 1, kernel_size=1), # Output: 1 canale (Mappa di importanza)
+            nn.Sigmoid() # Mappa tra 0 e 1 (Soft Mask)
         )
         
+        # 3. Channel Attention (Opzionale, ispirato ai paper SE-Net / CBAM)
+        # Serve a dire "quali filtri sono importanti" (es. bordi verticali vs texture)
         self.channel_gate = nn.Sequential(
             nn.AdaptiveAvgPool2d(1),
             nn.Conv2d(channels * 2, channels // reduction, kernel_size=1),
@@ -31,42 +30,26 @@ class CrossModalAttention(nn.Module):
             nn.Sigmoid()
         )
 
-    def _create_gaussian_prior(self, h, w, sigma=1.5):
-        """Crea una gaussiana 2D centrata normalizzata tra 0 e 1"""
-        y = torch.arange(h).float() - (h - 1) / 2
-        x = torch.arange(w).float() - (w - 1) / 2
-        yy, xx = torch.meshgrid(y, x, indexing='ij')
-        
-        gaussian = torch.exp(-(xx**2 + yy**2) / (2 * sigma**2))
-        gaussian = gaussian / gaussian.max()  # Normalizza a [0, 1]
-        
-        return gaussian.unsqueeze(0).unsqueeze(0)  # [1, 1, H, W]
-
     def forward(self, rgb_feat, depth_feat):
-        B = rgb_feat.size(0)
+        # Concateniamo le feature grezze
+        combined = torch.cat([rgb_feat, depth_feat], dim=1) # [B, 1024, 7, 7]
         
-        combined = torch.cat([rgb_feat, depth_feat], dim=1)
-        
-        # --- A. SPATIAL ATTENTION con PRIOR ---
+        # --- A. SPATIAL ATTENTION (La tua "Soft Mask") ---
+        # "Dove guardare?"
         x_compressed = self.channel_reducer(combined)
-        learned_attention = self.spatial_gate(x_compressed)  # [B, 1, 7, 7] (logits, no sigmoid yet)
+        spatial_mask = self.spatial_gate(x_compressed) # [B, 1, 7, 7]
         
-        # Combiniamo: attention appresa + prior gaussiano
-        # Il prior viene espanso per il batch
-        prior = self.gaussian_prior.expand(B, -1, -1, -1)  # [B, 1, 7, 7]
-        
-        # Metodo semplice: media pesata prima della sigmoid
-        combined_attention = learned_attention + self.prior_strength * (prior * 2 - 1)  # prior scalato a [-1, 1]
-        spatial_mask = torch.sigmoid(combined_attention)  # [B, 1, 7, 7]
-        
-        # --- B. CHANNEL ATTENTION ---
-        channel_scale = self.channel_gate(combined)
+        # --- B. CHANNEL ATTENTION (Raffinamento) ---
+        # "Cosa cercare?"
+        channel_scale = self.channel_gate(combined) # [B, 1024, 1, 1]
         rgb_scale, depth_scale = torch.split(channel_scale, rgb_feat.size(1), dim=1)
         
-        # --- C. APPLICAZIONE ---
+        # --- C. FUSIONE CROSS-GATED ---
+        # 1. Applichiamo la Soft Mask Spaziale a entrambi
         rgb_attended = rgb_feat * spatial_mask
         depth_attended = depth_feat * spatial_mask
         
+        # 2. Applichiamo il Channel Scaling (Ricalibrazione)
         rgb_final = rgb_attended * rgb_scale
         depth_final = depth_attended * depth_scale
         

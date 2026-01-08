@@ -415,7 +415,7 @@ class DAMFTurboTrainerA100:
                                 mode="val"
                             )
                     else:
-                        pred_rot, pred_trans, debug = self.model(images, depths,bb_info,cam_params, return_debug=False)
+                        pred_rot, pred_trans, debug = self.model(images, depths,bb_info,cam_params, return_debug=True)
 
                     batch_idx += 1
                     #pred_rot, pred_trans = self.model(images, depths,bb_info,cam_params)
