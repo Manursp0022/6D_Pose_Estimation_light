@@ -38,7 +38,7 @@ class DAMFTurboTrainerA100:
         ).to(self.device)
         """
         print("Initializing  DenseFusion_Masked_DualAtt_NetVarNoMask (A100 Optimized)...")
-        self.model =  DenseFusion_Masked_DualAtt_NetVar(
+        self.model =  DenseFusion_Masked_DualAtt_NetVarNoMask(
             pretrained=True, 
             temperature=self.cfg['temperature']
         ).to(self.device)
