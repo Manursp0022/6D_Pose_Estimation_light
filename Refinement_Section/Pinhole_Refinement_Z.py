@@ -9,7 +9,7 @@ class ImageBasedTranslationNet(nn.Module):
         
         # Camera intrinsics: [fx, cx, fy, cy]
         self.register_buffer('intrinsics', 
-                    torch.tensor([572.4114, 325.2611, 573.57043, 242.04899], 
+                    torch.tensor([0.8994, 0.5082, 1.1949, 0.5043], 
                                 dtype=torch.float32))
         
         # Visual feature extractor
@@ -31,24 +31,24 @@ class ImageBasedTranslationNet(nn.Module):
         
         # Geometric encoder: bbox (4) + intrinsics (4) = 8 dims
         self.geo_encoder = nn.Sequential(
-            nn.Linear(8, 64),  # Changed from 4 to 8
+            nn.Linear(8, 64),
+            nn.BatchNorm1d(64), # Normalize geometric path
             nn.ReLU(),
-            nn.Dropout(0.2),
             nn.Linear(64, 128),
+            nn.BatchNorm1d(128),
             nn.ReLU()
         )
         
         # Fusion layer: visual features + geometric features
         self.fusion = nn.Sequential(
             nn.Linear(feature_dim + 128, 512),
+            nn.BatchNorm1d(512), # Critical: Normalize the combined features
             nn.ReLU(),
             nn.Dropout(0.3),
             nn.Linear(512, 256),
+            nn.BatchNorm1d(256),
             nn.ReLU(),
-            nn.Dropout(0.2),
-            nn.Linear(256, 128),
-            nn.ReLU(),
-            nn.Linear(128, 1)  # Output: Z
+            nn.Linear(256, 1) # Output: Z (meters)
         )
         
     def forward(self, image, bbox):
@@ -76,6 +76,6 @@ class ImageBasedTranslationNet(nn.Module):
         
         # Fuse visual and geometric features
         combined = torch.cat([visual_feat, geo_feat], dim=1)  # (B, 512 + 128)
-        translation = self.fusion(combined)  # (B, 1)
+        Z = self.fusion(combined)  # (B, 1)
         
-        return translation
+        return Z

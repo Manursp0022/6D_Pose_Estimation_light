@@ -149,15 +149,16 @@ class PoseNetEvaluator:
                 # Dati Ground Truth
                 paths = batch['path']
                 # = batch['bbox'].to(self.device)
-                intrinsics = batch['cam_params'].to(self.device)
+                intrinsics = batch['cam_params_raw'].to(self.device)
                 gt_translation = batch['translation'].to(self.device)
                 gt_quats = batch['quaternion'].to(self.device)
                 class_ids = batch['class_id'].numpy()
+                bboxes = batch['gt_bbox'].to(self.device)
 
                 # YOLO PREDICTION 
                 # Passiamo i path: è più lento ma sicuro (evita problemi di normalizzazione colori)
                 yolo_results = self.YOLO(paths, conf=YOLO_CONF,verbose=False)
-
+                
                 # Prepariamo i batch per Pinhole e ResNet
                 pred_bboxes_list = []
                 resnet_input_list = []

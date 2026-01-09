@@ -11,6 +11,7 @@ from utils.Posenet_utils.utils_geometric import solve_pinhole_diameter, backproj
 from Refinement_Section.Pinhole_Refinement_Z import ImageBasedTranslationNet as TinyPinholeRefiner
 from models.Posenet import PoseResNet
 from utils.Posenet_utils.quaternion_Loss import QuaternionLoss
+from utils.Posenet_utils.translation_Loss import weightedTranslationLoss
 
 class PoseNetTrainerRefined:
     def __init__(self, config):
@@ -32,11 +33,11 @@ class PoseNetTrainerRefined:
 
         self.train_loader, self.val_loader = self._setup_data()
         self.model, self.refiner, self.optimizer, self.scheduler = self._setup_model()
-        self.criterion_trans = torch.nn.L1Loss()
+        self.criterion_trans = weightedTranslationLoss()
         self.criterion_rot = QuaternionLoss()
         
         # Metrics
-        self.history = {'train_loss': [], 'val_loss': [], 'lr': []}
+        self.history = {'train_loss': [], 'val_loss': [], 'resnet_lr': [], 'refiner_lr': []}
 
     def _get_device(self):
         if torch.backends.mps.is_available():
@@ -88,22 +89,27 @@ class PoseNetTrainerRefined:
         
         for batch in progress_bar:
             images = batch['image'].to(self.device)
-            bboxes = batch['bbox_norm'].to(self.device)
-            intrinsics = batch['cam_params'].to(self.device)
+            #bboxes = batch['bbox_norm'].to(self.device)
+            bboxes_raw = batch['gt_bbox'].to(self.device)
+            intrinsics = batch['cam_params_raw'].to(self.device)
             gt_translation = batch['translation'].to(self.device)
             gt_quaternion = batch['quaternion'].to(self.device)
             class_ids = batch['class_id'].to(self.device)
 
             self.optimizer.zero_grad()
-            fx, fy, cx, cy = intrinsics[:, 0], intrinsics[:, 2], intrinsics[:, 1], intrinsics[:, 3]
+            
             # Translation (Refined Pinhole - Yes Gradient)
             diameters = self._get_diameters_tensor(class_ids)
 
-            z_pred = self.refiner(images, bboxes)
+            z_pred = self.refiner(images, bboxes_raw)
 
-            pred_trans = backproject_bbox_to_3d(bboxes, z_pred, fx, fy, cx, cy)
+            fx, fy, cx, cy = [intrinsics[:, i].unsqueeze(1) for i in [0, 1, 2, 3]]
             
-            loss_t = self.criterion_trans(pred_trans, gt_translation, weight=torch.tensor([1.0, 1.0, 5.0], dtype=torch.float32).to(self.device))
+            #print("Intrinsics fx, fy, cx, cy:", fx, fy, cx, cy)
+            pred_trans = backproject_bbox_to_3d(bboxes_raw, z_pred, fx, fy, cx, cy)
+            """print("Predicted Translation:", pred_trans)
+            print("Ground Truth Translation:", gt_translation)"""
+            loss_t = self.criterion_trans(pred_trans, gt_translation, weight=torch.tensor([1.0, 1.0, 1.0], dtype=torch.float32).to(self.device))
 
             #  Rotation (ResNet - Yes Gradient)
             pred_quats = self.model(images)
@@ -123,27 +129,30 @@ class PoseNetTrainerRefined:
 
     def validate(self):
         self.model.eval()
+        self.refiner.eval()
         running_val_loss = 0.0
         
         with torch.no_grad():
             for batch in tqdm(self.val_loader, desc="Validation"):
                 images = batch['image'].to(self.device)
                 bboxes = batch['bbox_norm'].to(self.device)
-                intrinsics = batch['cam_params'].to(self.device)
+                bboxes_raw = batch['gt_bbox'].to(self.device)
+                intrinsics = batch['cam_params_raw'].to(self.device)
                 gt_translation = batch['translation'].to(self.device)
                 gt_quats = batch['quaternion'].to(self.device)
                 class_ids = batch['class_id'].to(self.device)
 
                 # Translation
                 
-                fx, fy, cx, cy = intrinsics[:, 0], intrinsics[:, 2], intrinsics[:, 1], intrinsics[:, 3]
+                fx, fy, cx, cy = [intrinsics[:, i].unsqueeze(1) for i in [0, 1, 2, 3]]
+                #print(fx, fy, cx, cy)
+                #print("Intrinsics fx, fy, cx, cy:", fx, fy, cx, cy)
+                z_pred = self.refiner(images, bboxes_raw)
 
-                z_pred = self.refiner(images, bboxes)
-
-                pred_trans = backproject_bbox_to_3d(bboxes, z_pred, fx, fy, cx, cy)
+                pred_trans = backproject_bbox_to_3d(bboxes_raw, z_pred, fx, fy, cx, cy)
                 #print("Refined Translation:", pred_translation)
                 #print("Ground Truth Translation:", gt_translation)
-                loss_t = self.criterion_trans(pred_trans, gt_translation, weight=torch.tensor([1.0, 1.0, 5.0], dtype=torch.float32).to(self.device))
+                loss_t = self.criterion_trans(pred_trans, gt_translation, weight=torch.tensor([1.0, 1.0, 1.0], dtype=torch.float32).to(self.device))
 
                 # Rotation
                 pred_quats = self.model(images)
@@ -183,7 +192,7 @@ class PoseNetTrainerRefined:
                 best_model_state = copy.deepcopy(self.model.state_dict())
                 early_stop_counter = 0
                 torch.save(self.model.state_dict(), os.path.join(self.save_dir, 'best_posenet_baseline_w_refiner.pth'))
-                torch.save(self.refiner.state_dict(), os.path.join(self.save_dir, 'best_pinhole_refiner.pth'))
+                torch.save(self.refiner.state_dict(), os.path.join(self.save_dir, 'best_pinhole_refiner_z.pth'))
                 print("----> New Best Model Saved! <----")
             else:
                 early_stop_counter += 1
@@ -196,27 +205,51 @@ class PoseNetTrainerRefined:
         self.plot_results()
 
     def plot_results(self):
-        plt.figure(figsize=(10, 5))
-        plt.plot(self.history['train_loss'], label='Train Loss')
-        plt.plot(self.history['val_loss'], label='Val Loss')
-        plt.plot(self.history['resnet_lr'], label='ResNet Learning Rate')
-        plt.plot(self.history['refiner_lr'], label='Refiner Learning Rate')
-        plt.xlabel('Epochs')
-        plt.ylabel('Loss')
-        plt.legend()
-        plt.title(f"Training Results (rotation LR={self.cfg['lr']}, refiner LR={self.cfg['lr']*0.1})")
-        plt.savefig(os.path.join(self.save_dir, "training_curve.png"))
+        """
+        Genera due grafici separati: uno per le Loss e uno per le Learning Rates.
+        """
+        epochs = range(1, len(self.history['train_loss']) + 1)
+        
+        # Creiamo una figura con 2 subplot (2 righe, 1 colonna)
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 12))
+        
+        # --- PLOT 1: LOSS ---
+        ax1.plot(epochs, self.history['train_loss'], 'b-', label='Train Loss', linewidth=2)
+        ax1.plot(epochs, self.history['val_loss'], 'r-', label='Val Loss', linewidth=2)
+        ax1.set_xlabel('Epochs')
+        ax1.set_ylabel('Loss Value')
+        ax1.set_title(f"Training & Validation Loss\n(Alpha={self.cfg['alpha']}, Beta={self.cfg['beta']})")
+        ax1.legend()
+        ax1.grid(True, linestyle='--', alpha=0.6)
+
+        # --- PLOT 2: LEARNING RATES ---
+        # Usiamo una scala logaritmica se i tassi variano di molto
+        ax2.plot(epochs, self.history['resnet_lr'], 'g--', label='ResNet LR')
+        ax2.plot(epochs, self.history['refiner_lr'], 'm--', label='Refiner LR')
+        ax2.set_xlabel('Epochs')
+        ax2.set_ylabel('Learning Rate')
+        ax2.set_yscale('log')  # Opzionale: utile se scendono di diversi ordini di grandezza
+        ax2.set_title("Learning Rate Schedule")
+        ax2.legend()
+        ax2.grid(True, linestyle='--', alpha=0.6)
+
+        plt.tight_layout()
+        
+        # Salvataggio
+        save_path = os.path.join(self.save_dir, "training_metrics.png")
+        plt.savefig(save_path)
+        print(f"📈 Grafici salvati in: {save_path}")
         plt.show()
 if __name__ == "__main__":
     config = {
         'split_train': 'data/autosplit_train_ALL.txt',
         'split_val': 'data/autosplit_val_ALL.txt',
         'dataset_root': 'dataset/Linemod_preprocessed',
-        'batch_size': 16,
+        'batch_size': 32,
         'lr': 0.001,
         'epochs': 50,
-        'alpha': 1.0,
-        'beta': 0.1,
+        'alpha': 0.1,
+        'beta': 1.0,
         'scheduler_patience': 5,
         'early_stop_patience': 10,
         'save_dir': 'checkpoints/'

@@ -73,7 +73,7 @@ class LineModPoseDataset(Dataset):
             fy = cam_K_list[4]
             cx = cam_K_list[2]
             cy = cam_K_list[5]
-            #cam_params = [fx,fy,cx,cy]
+            cam_params = [fx,fy,cx,cy]
 
             cam_params_norm = [
                 fx / self.img_w,  # focal_x normalizzata
@@ -128,6 +128,7 @@ class LineModPoseDataset(Dataset):
                         'R': obj['cam_R_m2c'],
                         't': obj['cam_t_m2c'],
                         'position_input': cam_params_norm,
+                        'cam_K':cam_params
                     }
                     self.samples.append(sample)
 
@@ -270,6 +271,7 @@ class LineModPoseDataset(Dataset):
 
         params = sample['position_input'] 
         cam_params = torch.tensor(params, dtype=torch.float32)
+        cam_params_raw = torch.tensor(sample['cam_K'], dtype=torch.float32)
 
         return {
             'image': img_tensor,
@@ -280,6 +282,8 @@ class LineModPoseDataset(Dataset):
             'class_id': target_obj_id,
             'path': sample['img_path'],
             'bbox_norm': torch.tensor(bbox_norm, dtype=torch.float32),
-            'cam_params': cam_params
+            'gt_bbox': torch.tensor(bbox, dtype=torch.float32),
+            'cam_params': cam_params,
+            'cam_params_raw': cam_params_raw,
             #'depth_stats': depth_stats_tensor, <--- add only if i want to improve depth
         }

@@ -11,9 +11,9 @@ from plyfile import PlyData
 from scipy.spatial.transform import Rotation as R
 from ultralytics import YOLO
 from models.Posenet import PoseResNet
-from Refinement_Section.Pinhole_Refinement import ImageBasedTranslationNet as PinholeRefineNet
+from Refinement_Section.Pinhole_Refinement_Z import ImageBasedTranslationNet as PinholeRefineNet
 from utils.Posenet_utils.posenet_dataset_ALL import LineModPoseDataset
-from utils.Posenet_utils.utils_geometric import solve_pinhole_diameter
+from utils.Posenet_utils.utils_geometric import solve_pinhole_diameter, backproject_bbox_to_3d
 from utils.Posenet_utils.PoseEvaluator import PoseEvaluator 
 from utils.Posenet_utils.utils_geometric import crop_square_resize
 
@@ -45,7 +45,7 @@ class PoseNetEvaluator:
             1: "Ape", 2: "Benchvise", 4: "Cam", 5: "Can", 6: "Cat", 8: "Driller",
             9: "Duck", 10: "Eggbox", 11: "Glue", 12: "Holepuncher", 13: "Iron", 14: "Lamp", 15: "Phone"
         }
-
+        self.error_threshold = self.cfg.get('error_threshold', 0.5)  # Default to 50% if not specified
         self.val_loader = self._setup_data()
         self.Resnet = self._setup_Resnet()
         self.refiner = self._setup_Refiner()
@@ -81,7 +81,7 @@ class PoseNetEvaluator:
         
         refiner = PinholeRefineNet().to(self.device)
         
-        weights_path = os.path.join(self.cfg['model_dir'], 'best_pinhole_refiner.pth')
+        weights_path = os.path.join(self.cfg['model_dir'], 'best_pinhole_refiner_z.pth')
         if not os.path.exists(weights_path):
             raise FileNotFoundError(f" Refiner Weights not found at: {weights_path}")
         
@@ -166,7 +166,7 @@ class PoseNetEvaluator:
                 paths = batch['path']
                 images = batch['image'].to(self.device)
                 # = batch['bbox'].to(self.device)
-                intrinsics = batch['cam_params'].to(self.device)
+                intrinsics = batch['cam_params_raw'].to(self.device)
                 gt_translation = batch['translation'].to(self.device)
                 gt_quats = batch['quaternion'].to(self.device)
                 class_ids = batch['class_id'].numpy()
@@ -184,23 +184,25 @@ class PoseNetEvaluator:
                     target_linemod_id = int(class_ids[i])                    
 
                     target_yolo_id = lm_to_yolo[target_linemod_id] # Es. Driller(8) -> 5
-                    
+
                     best_conf = -1
                     found_box = None
 
                     for box in result.boxes:
                         cls = int(box.cls[0]) 
                         conf = float(box.conf[0])
-                        
+
                         # VERIFICA MAPPING ID: Se YOLO è trainato su classi 0-12 e LINEMOD è 1-15, controlla!
                         # Qui assumo corrispondenza diretta.
                         if cls == target_yolo_id and conf > best_conf:
-                            # YOLO format xyxy -> convertiamo in x,y,w,h per la tua funzione crop
+                            # YOLO format xyxy -> convertiamo in x,y,w,h per la crop
                             x1, y1, x2, y2 = box.xyxy[0].tolist()
                             w = x2 - x1
                             h = y2 - y1
                             found_box = torch.tensor([x1, y1, w, h], dtype=torch.float32)
                             best_conf = conf
+                            img_h, img_w = 480, 640
+                            found_box_norm = torch.tensor([x1/img_w, y1/img_h, w/img_w, h/img_h], dtype=torch.float32)
                     
                     if found_box is not None:
                         valid_indices.append(i)
@@ -222,7 +224,6 @@ class PoseNetEvaluator:
 
                 if len(valid_indices) == 0:
                     continue
-
                 #creating tensors only with found objects
                 pred_bboxes_tensor = torch.stack(pred_bboxes_list).to(self.device)
                 resnet_batch = torch.stack(resnet_input_list).to(self.device)
@@ -238,9 +239,10 @@ class PoseNetEvaluator:
                 # Pinhole 
                 current_diameters = [self.DRS[cid] / 1000.0 for cid in subset_class_ids]
                 diam_tensor = torch.tensor(current_diameters, dtype=torch.float32).to(self.device)
-                pred_trans = solve_pinhole_diameter(pred_bboxes_tensor, subset_intrinsics, diam_tensor)
-                pinhole_xy = pred_trans[:, :2]
-                pred_trans = self.refiner(subset_imgs, pred_bboxes_tensor, pinhole_xy)
+                fx, fy, cx, cy = [subset_intrinsics[:, i].unsqueeze(1) for i in [0, 1, 2, 3]]
+                
+                z = self.refiner(subset_imgs, pred_bboxes_tensor)
+                pred_trans = backproject_bbox_to_3d(pred_bboxes_tensor, z, fx, fy, cx, cy)
                
                 pred_quats = self.Resnet(resnet_batch)
 
@@ -248,6 +250,9 @@ class PoseNetEvaluator:
                 pred_trans_np = pred_trans.cpu().numpy()
                 #Using subset (Important: covering the case in which YOLO finds nothing in some images)
                 gt_trans_np = subset_gt_trans.cpu().numpy() 
+
+                print(pred_trans_np)
+                print(gt_trans_np)
                 
                 pred_R_np = self._quaternion_to_matrix(pred_quats)
                 gt_R_np = self._quaternion_to_matrix(subset_gt_quats)
@@ -280,7 +285,7 @@ class PoseNetEvaluator:
                     
                     # Check Correctness (Threshold: 10% of diameter)
                     diameter_m = self.DRS[obj_id] / 1000.0
-                    threshold = 0.1 * diameter_m
+                    threshold = self.error_threshold * diameter_m
                     
                     is_correct = self.metric_calculator.is_pose_correct(add_error_m, threshold)
                     
@@ -354,7 +359,7 @@ class PoseNetEvaluator:
             
             # Threshold in cm (D/10)
             # DRS is in mm, so: (mm / 1000) * 0.1 * 100 -> cm
-            thresholds_cm.append((self.DRS[oid] / 1000.0 * 0.5) * 100.0)
+            thresholds_cm.append((self.DRS[oid] / 1000.0 * self.error_threshold) * 100.0)
 
         # Create Figure
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
@@ -362,7 +367,7 @@ class PoseNetEvaluator:
         # --- PLOT 1: Accuracy (%) ---
         bars = ax1.bar(labels, accuracies, color='skyblue', edgecolor='black')
         ax1.set_ylabel('Accuracy (% of Pass)')
-        ax1.set_title('Per-Class Accuracy (ADD < 0.1 Diameter)')
+        ax1.set_title(f'Per-Class Accuracy (ADD < {self.error_threshold} Diameter)')
         ax1.set_ylim(0, 100)
         ax1.grid(axis='y', linestyle='--', alpha=0.7)
         
@@ -379,7 +384,7 @@ class PoseNetEvaluator:
         # Mean Error Bar
         rects1 = ax2.bar(x - width/2, mean_errors, width, label='Mean ADD Error (cm)', color='salmon')
         # Threshold Bar (for direct comparison)
-        rects2 = ax2.bar(x + width/2, thresholds_cm, width, label='Threshold (0.5*D)', color='lightgreen', alpha=0.7)
+        rects2 = ax2.bar(x + width/2, thresholds_cm, width, label= f'Threshold ({self.error_threshold}*D)', color='lightgreen', alpha=0.7)
         
         ax2.set_ylabel('Distance (cm)')
         ax2.set_title('Mean ADD Error vs Threshold per Object')
@@ -402,7 +407,8 @@ if __name__ == "__main__":
         'dataset_root': 'dataset/Linemod_preprocessed',
         'model_dir': 'checkpoints/',
         'batch_size': 16,
-        'save_dir': 'checkpoints_results/'
+        'save_dir': 'evaluation_results/',
+        'error_threshold': 0.5  # 10% of diameter
     }
 
     evaluator = PoseNetEvaluator(config)
