@@ -77,13 +77,20 @@ class LineModPoseDatasetMasked(Dataset):
             fy = cam_K_list[4]
             cx = cam_K_list[2]
             cy = cam_K_list[5]
-
+            
             cam_params_norm = [
-                fx / self.img_w,
-                fy / self.img_h,
-                cx / self.img_w,
-                cy / self.img_h
+                fx , fy , cx , cy
             ]
+
+            """
+            cam_params_norm = [
+                fx ,
+                fy ,
+                cx ,
+                cy
+            ]
+            """
+
             
             if img_id_num in gt_data_folder:
                 objs_in_frame = gt_data_folder[img_id_num]

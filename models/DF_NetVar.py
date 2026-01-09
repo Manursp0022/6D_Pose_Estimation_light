@@ -2,8 +2,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.models as models 
-from utils.Posenet_utils.attention import GeometricAttention 
-from utils.Posenet_utils.CrossModalAttention import CrossModalAttention
 
 class DenseFusion_NetVar(nn.Module):
     def __init__(self, pretrained=True, temperature=2.0):

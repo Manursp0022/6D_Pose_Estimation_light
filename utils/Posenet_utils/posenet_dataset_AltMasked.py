@@ -113,11 +113,17 @@ class LineModPoseDataset_AltMasked(Dataset):
             #cam_params = [fx,fy,cx,cy]
 
             cam_params_norm = [
-                fx / self.img_w,  # focal_x normalizzata
-                fy / self.img_h,  # focal_y normalizzata
-                cx / self.img_w,  # principal point x normalizzato [0-1]
-                cy / self.img_h   # principal point y normalizzato [0-1]
+                fx , fy , cx , cy
             ]
+
+            """
+            cam_params_norm = [
+                fx ,
+                fy ,
+                cx ,
+                cy
+            ]
+            """
             
             if img_id_num in gt_data_folder:
                 objs_in_frame = gt_data_folder[img_id_num]

@@ -19,6 +19,7 @@ from models.DFMasked_DualAtt_Net import DenseFusion_Masked_DualAtt_Net
 from models.DFMasked_DualAtt_NetVar import DenseFusion_Masked_DualAtt_NetVar
 from models.DFMasked_DualAtt_NetVarGlobal import DenseFusion_Masked_DualAtt_NetVarGlobal
 from models.DFMasked_DualAtt_NetVarNoMask import DenseFusion_Masked_DualAtt_NetVarNoMask
+from models.DF_NetVar import DenseFusion_NetVar
 
 class DAMFTurboTrainerA100:
     def __init__(self, config):
@@ -30,19 +31,20 @@ class DAMFTurboTrainerA100:
 
         # MIXED PRECISION SCALER ---
         self.scaler = torch.cuda.amp.GradScaler()
-        """
-        print("Initializing  DenseFusion_Masked_DualAtt_NetVar (A100 Optimized)...")
-        self.model = DenseFusion_Masked_DualAtt_NetVar(
+
+        print("Initializing  DenseFusion_Masked_DualAtt_NetVarNoMask (A100 Optimized)...")
+        self.model = DenseFusion_NetVar(
             pretrained=True, 
             temperature=self.cfg['temperature']
         ).to(self.device)
+
         """
         print("Initializing  DenseFusion_Masked_DualAtt_NetVarNoMask (A100 Optimized)...")
         self.model =  DenseFusion_Masked_DualAtt_NetVarNoMask(
             pretrained=True, 
             temperature=self.cfg['temperature']
         ).to(self.device)
-
+        """
         """
         self.model = DenseFusion_Masked_DualAtt_NetVarGlobal(
             pretrained=True, 
@@ -302,8 +304,9 @@ class DAMFTurboTrainerA100:
                 active_debug = (batch_idx == 0)
                 # Forward pass
                 if active_debug:
-                    pred_rot, pred_trans, debug_info = self.model(images, depths,bb_info,cam_params, return_debug=True)                     
+                    pred_rot, pred_trans = self.model(images, depths,bb_info,cam_params)                     
                     # SALVATAGGIO IMMAGINE
+                    """
                     if 'attention_map' in debug_info:
                         self._visualize_and_save_mask(
                             images, 
@@ -313,8 +316,9 @@ class DAMFTurboTrainerA100:
                             self.cfg['save_dir'],
                             mode="train"
                         )
+                    """
                 else:
-                    pred_rot, pred_trans, debug_info = self.model(images, depths,bb_info,cam_params, return_debug=True) 
+                    pred_rot, pred_trans = self.model(images, depths,bb_info,cam_params) 
 
                 batch_idx += 1                    
 
@@ -377,8 +381,9 @@ class DAMFTurboTrainerA100:
 
                     # Forward pass
                     if active_debug:
-                        pred_rot, pred_trans, debug_info = self.model(images, depths,bb_info,cam_params, return_debug=True)                     
+                        pred_rot, pred_trans = self.model(images, depths,bb_info,cam_params)                     
                         # SALVATAGGIO IMMAGINE
+                        """
                         if 'attention_map' in debug_info:
                             self._visualize_and_save_mask(
                                 images, 
@@ -388,8 +393,9 @@ class DAMFTurboTrainerA100:
                                 self.cfg['save_dir'],
                                 mode="val"
                             )
+                        """
                     else:
-                        pred_rot, pred_trans, debug_info = self.model(images, depths,bb_info,cam_params, return_debug=True)
+                        pred_rot, pred_trans = self.model(images, depths,bb_info,cam_params)
 
                     batch_idx += 1
                     #pred_rot, pred_trans = self.model(images, depths,bb_info,cam_params)
