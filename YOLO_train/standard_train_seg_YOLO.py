@@ -41,7 +41,7 @@ class yolo_seg_trainer:
             imgsz=640,
             project="linemod-segmentation",  
             name=f"YOLO_{self.model}_ep{self.epochs}",
-            val=False,
+            val=True,
             save=True,
             exist_ok=False,
             pretrained=True,
@@ -50,3 +50,9 @@ class yolo_seg_trainer:
             freeze=self.freeze_layers,
         )
 
+if __name__ == "__main__":
+    dataset_root = "C:\\Users\\gabri\\Desktop\\AML project\\6D_Pose_Estimation_light\\dataset\\Linemod_preprocessed"
+    config_path = "C:\\Users\\gabri\\Desktop\\AML project\\6D_Pose_Estimation_light\\dataset\\Linemod_preprocessed\\linemod_yolo_config_standard.yaml"
+    trainer = yolo_seg_trainer(dataset_root=dataset_root, epochs=50)
+    #config_path = trainer.create_labels_and_config()
+    trainer.train(config_path=config_path)
