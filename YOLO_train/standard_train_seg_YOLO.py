@@ -1,5 +1,5 @@
 from ultralytics import YOLO, settings
-from utils.YOLO_utils.seg_yolo_utils_train_all import create_yolo_labels, create_yolo_config_all
+from utils.YOLO_utils.seg_yolo_standard_train_utils import create_yolo_labels, create_yolo_config_all
 
 class yolo_seg_trainer:
     def __init__(self,
@@ -17,19 +17,19 @@ class yolo_seg_trainer:
         self.batch = batch
         self.freeze_layers = freeze_layers
 
-    """def create_labels_and_config(self):
+    def create_labels_and_config(self):
         print(f"___Data Preparation ___")
         train_split = "data\\autosplit_train_ALL.txt"
         val_split = "data\\autosplit_val_ALL.txt"
-        create_yolo_labels(self.dataset_root, train_split, val_split)
+        create_yolo_labels(self.dataset_root)
 
-        config_path = create_yolo_config_all(self.dataset_root, train_split, val_split)
-        return config_path"""
+        config_path = create_yolo_config_all(self.dataset_root)
+        return config_path
 
     def train(self, config_path=None):
         #dataset_root = "C:\Users\gabri\Desktop\AML_project\6D_Pose_Estimation_light\dataset\Linemod_preprocessed" if args["dataset_root"] is None else args["dataset_root"]
         if config_path is None:
-            print(f"[INFO] No config path provided, create it from utils.")
+            print(f"[INFO] No config path provided, create it using create_labels_and_config and pass it as argument.")
         print(f"___Starting training___")
         model = YOLO(self.model)
 
@@ -41,17 +41,12 @@ class yolo_seg_trainer:
             imgsz=640,
             project="linemod-segmentation",  
             name=f"YOLO_{self.model}_ep{self.epochs}",
-            val=True,
+            val=False,
             save=True,
             exist_ok=False,
             pretrained=True,
             optimizer='auto',
-            verbose=False,
+            verbose=True,
             freeze=self.freeze_layers,
         )
 
-if __name__ == "__main__":
-    dataset_root = "C:\\Users\\gabri\\Desktop\\AML project\\6D_Pose_Estimation_light\\dataset\\Linemod_preprocessed"
-    yolo = yolo_seg_trainer(dataset_root=dataset_root)
-    config = yolo.create_labels_and_config()
-    yolo.train(config_path=config)
