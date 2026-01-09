@@ -185,7 +185,7 @@ tiny-imagenet-200/
 !checkpoints/.gitkeep
 
 # Linemod segmentation data training results and plots
-linemod_segmentation/
+linemod-segmentation/
 
 # Wandb logs
 wandb/
