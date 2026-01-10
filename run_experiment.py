@@ -50,8 +50,8 @@ if __name__ == "__main__":
         'save_dir': 'checkpoints_results/',
         'model_old': False,
         'training_mode': 'hard',
-        'yolo_model_path': 'checkpoints/best_seg_YOLO.pt' ,
-        'temperature': 2.0,
+        'yolo_model_path': 'checkpoints/final_best_seg_YOLO.pt' ,
+        'temperature': 1.5,
         # Parametri
         'batch_size': 32,
         'num_workers': 12,  # 0 su Mac, 4-8 su Linux
@@ -68,7 +68,6 @@ if __name__ == "__main__":
     print(f"Final Accuracy: {results['accuracy']:.2f}%")
     print(f"Mean ADD: {results['mean_add_cm']:.2f} cm")
     """
-
     """
     config = {
         'dataset_root': '/Users/emanuelerosapepe/Desktop/test_YOLO/Linemod_preprocessed',
