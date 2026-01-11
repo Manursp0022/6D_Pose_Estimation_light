@@ -31,8 +31,8 @@ class DAMFTurboTrainerA100:
         # MIXED PRECISION SCALER ---
         self.scaler = torch.cuda.amp.GradScaler()
 
-        print("Initializing  DenseFusion_Masked_DualAtt_NetVarNoMask (A100 Optimized)...")
-        self.model = DenseFusion_Masked_DualAtt_NetVar_WConf(
+        print("Initializing  DenseFusion_NetVar (A100 Optimized)...")
+        self.model = DenseFusion_NetVar(
             pretrained=True, 
             temperature=self.cfg['temperature']
         ).to(self.device)
@@ -79,20 +79,13 @@ class DAMFTurboTrainerA100:
 
         # B. Setup Loss, con opzione weighted o standard, weighted L = a rotLoss + b TrasLoss, Standard: AddLoss
         use_weighted = self.cfg.get('use_weighted_loss', False)
-        """
         self.criterion = DenseFusionLoss(
             self.device,
             rot_weight=self.cfg.get('rot_weight',1.0),
             trans_weight=self.cfg.get('trans_weight',0.3),
             use_weighted=use_weighted
         )
-        """
 
-        self.criterion = DenseFusionLoss_Conf(
-            rot_weight=self.cfg.get('rot_weight', 1.0),
-            trans_weight=self.cfg.get('trans_weight', 0.3),
-            w_rate=self.cfg.get('w_rate', 0.01) # Il peso w del log(c)
-        )
         print(f"Loss Type: {'Weighted' if use_weighted else 'Standard ADD (Paper)'}")
         self.models_tensor = self._load_3d_models_tensor()
 
@@ -311,11 +304,7 @@ class DAMFTurboTrainerA100:
                 active_debug = (batch_idx == 0)
                 # Forward pass
                 if active_debug:
-                    #pred_rot, pred_trans = self.model(images, depths,bb_info,cam_params)  
-                    pred_rot_dense, pred_trans_dense, pred_conf_dense = self.model(
-                        images, depths, bb_info, cam_params, return_dense=True
-                    )                           
-                    # SALVATAGGIO IMMAGINE
+                    pred_rot, pred_trans = self.model(images, depths,bb_info,cam_params)  
                     """
                     if 'attention_map' in debug_info:
                         self._visualize_and_save_mask(
@@ -327,11 +316,8 @@ class DAMFTurboTrainerA100:
                             mode="train"
                         )
                     """
-                else:
-                    pred_rot_dense, pred_trans_dense, pred_conf_dense = self.model(
-                        images, depths, bb_info, cam_params, return_dense=True
-                    )        
-                    #pred_rot, pred_trans = self.model(images, depths,bb_info,cam_params) 
+                else:     
+                    pred_rot, pred_trans = self.model(images, depths,bb_info,cam_params) 
 
                 batch_idx += 1                    
 
@@ -343,21 +329,6 @@ class DAMFTurboTrainerA100:
                     current_model_points, class_ids,
                     return_metrics=True
                 )
-
-                """
-                force_geo = (epoch < 5)
-
-                loss, metrics = self.criterion(
-                    pred_rot_dense,    # [B, 4, 49]
-                    pred_trans_dense,  # [B, 3, 49]
-                    pred_conf_dense,   # [B, 1, 49] <-- ECCOLA!
-                    gt_q, gt_t, 
-                    current_model_points, 
-                    class_ids,
-                    return_metrics=True,
-                    force_geo
-                )
-                """
 
             # Scaled Backward Pass
             self.scaler.scale(loss).backward() #scaler multiplies the loss by a large number (e.g. x1000) before calculating the gradients (.scale(loss).backward()). This makes the gradients ‘manageable’ numbers.
@@ -409,12 +380,7 @@ class DAMFTurboTrainerA100:
 
                     # Forward pass
                     if active_debug:
-                        #pred_rot, pred_trans = self.model(images, depths, bb_info,cam_params)   
-
-                        pred_rot_dense, pred_trans_dense, pred_conf_dense = self.model(
-                            images, depths, bb_info, cam_params, return_dense=True
-                        )                     
-                        # SALVATAGGIO IMMAGINE
+                        pred_rot, pred_trans = self.model(images, depths, bb_info,cam_params)   
                         """
                         if 'attention_map' in debug_info:
                             self._visualize_and_save_mask(
@@ -426,11 +392,8 @@ class DAMFTurboTrainerA100:
                                 mode="val"
                             )
                         """
-                    else:
-                        pred_rot_dense, pred_trans_dense, pred_conf_dense = self.model(
-                            images, depths, bb_info, cam_params, return_dense=True
-                        )        
-                        #pred_rot, pred_trans = self.model(images, depths, bb_info,cam_params)
+                    else:    
+                        pred_rot, pred_trans = self.model(images, depths, bb_info,cam_params)
 
                     batch_idx += 1
                     #pred_rot, pred_trans = self.model(images, depths,bb_info,cam_params)
@@ -443,18 +406,7 @@ class DAMFTurboTrainerA100:
                         current_model_points, class_ids,
                         return_metrics=True
                     )
-                    """
-                    force_geo = (epoch < 8)
-                    loss, metrics = self.criterion(
-                        pred_rot_dense,    # [B, 4, 49]
-                        pred_trans_dense,  # [B, 3, 49]
-                        pred_conf_dense,   # [B, 1, 49] <-- ECCOLA!
-                        gt_q, gt_t, 
-                        current_model_points, class_ids,
-                        return_metrics=True,
-                        force_geo
-                    )
-                    """
+
                 running_loss += loss.item()
                 running_rot_loss += metrics['rot_loss']
                 running_trans_loss += metrics['trans_loss']
@@ -468,10 +420,9 @@ class DAMFTurboTrainerA100:
 
     def run(self):
         print(f"Starting A100 TURBO Training ({self.cfg['epochs']} epochs)...")
-        # else "Standard ADD Loss (Paper)"
         #print(f"Using: {loss_type}")
-        #if self.criterion.use_weighted:
-            #print(f"Weights: Rotation={self.criterion.rot_weight}, Translation={self.criterion.trans_weight}")
+        if self.criterion.use_weighted:
+            print(f"Weights: Rotation={self.criterion.rot_weight}, Translation={self.criterion.trans_weight}")
         
         early_stop_counter = 0
         patience_limit = self.cfg.get('early_stop_patience', 20)
@@ -503,7 +454,7 @@ class DAMFTurboTrainerA100:
                 self.best_val_loss = val_loss
                 early_stop_counter = 0
                 
-                path = os.path.join(self.cfg['save_dir'], 'DenseFusion_NoMask_Crossatt.pth')
+                path = os.path.join(self.cfg['save_dir'], 'DenseFusion_NetVar_Zhead.pth')
                 torch.save({
                     'epoch': epoch,
                     'model_state_dict': self.model.state_dict(),
