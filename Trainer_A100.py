@@ -14,12 +14,10 @@ from utils.Posenet_utils.posenet_dataset_ALLMasked import LineModPoseDatasetMask
 from utils.Posenet_utils.posenet_dataset_AltMasked import LineModPoseDataset_AltMasked
 from utils.Posenet_utils.DenseFusion_Loss_log import DenseFusionLoss
 from models.DFMasked_DualAtt_Net import DenseFusion_Masked_DualAtt_Net
-from utils.Posenet_utils.DenseFusion_Loss_WConf import DenseFusionLoss_Conf
 #from models.DFMasked_DualAtt_NetVarNoMask import DFMasked_DualAtt_NetVarNoMask
 from models.DFMasked_DualAtt_NetVar import DenseFusion_Masked_DualAtt_NetVar
 from models.DFMasked_DualAtt_NetVarGlobal import DenseFusion_Masked_DualAtt_NetVarGlobal
 from models.DFMasked_DualAtt_NetVarNoMask import DenseFusion_Masked_DualAtt_NetVarNoMask
-from models.DFMasked_DualAtt_NetVar_WConf import DenseFusion_Masked_DualAtt_NetVar_WConf
 from models.DF_NetVar import DenseFusion_NetVar
 
 class DAMFTurboTrainerA100:
@@ -340,21 +338,26 @@ class DAMFTurboTrainerA100:
                 #pred_rot, pred_trans, debug = self.model(images, depths,bb_info,cam_params, return_debug=True, mask=masks) original
 
                 current_model_points = self.models_tensor[class_ids.long()] 
-                """
                 loss, metrics = self.criterion(
                     pred_rot, pred_trans, gt_q, gt_t, 
                     current_model_points, class_ids,
                     return_metrics=True
                 )
+
                 """
+                force_geo = (epoch < 5)
+
                 loss, metrics = self.criterion(
                     pred_rot_dense,    # [B, 4, 49]
                     pred_trans_dense,  # [B, 3, 49]
                     pred_conf_dense,   # [B, 1, 49] <-- ECCOLA!
                     gt_q, gt_t, 
-                    current_model_points, class_ids,
-                    return_metrics=True
+                    current_model_points, 
+                    class_ids,
+                    return_metrics=True,
+                    force_geo
                 )
+                """
 
             # Scaled Backward Pass
             self.scaler.scale(loss).backward() #scaler multiplies the loss by a large number (e.g. x1000) before calculating the gradients (.scale(loss).backward()). This makes the gradients ‘manageable’ numbers.
@@ -434,23 +437,24 @@ class DAMFTurboTrainerA100:
                     #pred_rot, pred_trans = self.model(images, depths,bb_info,cam_params, mask=masks)
                     
                     current_model_points = self.models_tensor[class_ids.long()]
-                    """
+                
                     loss, metrics = self.criterion(
                         pred_rot, pred_trans, gt_q, gt_t,
                         current_model_points, class_ids,
                         return_metrics=True
                     )
                     """
-            
+                    force_geo = (epoch < 8)
                     loss, metrics = self.criterion(
                         pred_rot_dense,    # [B, 4, 49]
                         pred_trans_dense,  # [B, 3, 49]
                         pred_conf_dense,   # [B, 1, 49] <-- ECCOLA!
                         gt_q, gt_t, 
                         current_model_points, class_ids,
-                        return_metrics=True
+                        return_metrics=True,
+                        force_geo
                     )
-
+                    """
                 running_loss += loss.item()
                 running_rot_loss += metrics['rot_loss']
                 running_trans_loss += metrics['trans_loss']

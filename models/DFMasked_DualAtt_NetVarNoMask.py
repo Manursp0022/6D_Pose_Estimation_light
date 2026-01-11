@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.models as models 
 from utils.Posenet_utils.attention import GeometricAttention 
-from utils.Posenet_utils.CBAM_Attention import CBAM_CrossModal
+
 class DenseFusion_Masked_DualAtt_NetVarNoMask(nn.Module):
     def __init__(self, pretrained=True, temperature=2.0):
         super().__init__()

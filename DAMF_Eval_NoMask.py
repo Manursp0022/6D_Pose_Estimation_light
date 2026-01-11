@@ -9,6 +9,7 @@ from scipy.spatial.transform import Rotation as R
 from torchvision import transforms
 from ultralytics import YOLO
 import cv2
+import torch.nn.functional as F
 #from models.DFMasked_DualAtt_NetVar_WRefiner import DenseFusion_Masked_DualAtt_NetVarWRef
 from models.DFMasked_DualAtt_Net import DenseFusion_Masked_DualAtt_Net
 from models.DFMasked_DualAtt_NetVar import DenseFusion_Masked_DualAtt_NetVar
@@ -155,6 +156,7 @@ class DAMF_Evaluator:
     def _setup_model(self):
         """Carica il modello DAMF_Net con i pesi addestrati."""
         print("🧠 Loading Masked_DualAtt_Net model...")
+        """
         model = DenseFusion_Masked_DualAtt_NetVarNoMask(
             pretrained=False,  # Non servono pesi ImageNet, carichiamo i tuoi
             temperature=self.cfg.get('temperature', 1.5)
@@ -164,13 +166,13 @@ class DAMF_Evaluator:
             pretrained=False,  # Non servono pesi ImageNet, carichiamo i tuoi
             temperature=self.cfg.get('temperature', 2.0)
         ).to(self.device)
-        """
-        DenseFusion_NetVar
-        
+            
         #weights_path = os.path.join(self.cfg['model_dir'], 'DenseFusion_Masked_DualAttNet_Hard1cm.pth')
         #weights_path = os.path.join(self.cfg['model_dir'], 'DenseFusion_Masked_DualAtt_NetVar_Dropout.pth')
         #weights_path = os.path.join(self.cfg['model_dir'], 'DenseFusion_Masked_DualAtt_NetVarRefinerHard.pth')
-        weights_path = os.path.join(self.cfg['model_dir'], 'DenseFusion_Att_NOMask_Top.pth')
+        #weights_path = os.path.join(self.cfg['model_dir'], 'DenseFusion_Att_NOMask_Top.pth')
+        weights_path = os.path.join(self.cfg['model_dir'], 'DenseFusion__NetVar.pth')
+        
         #weights_path = os.path.join(self.cfg['model_dir'], 'DenseFusion__NetVar.pth')
 
 
@@ -340,6 +342,232 @@ class DAMF_Evaluator:
         bbox_batch = torch.stack(bbox_list)
         
         return rgb_batch, depth_batch, bbox_batch, valid_indices # Ritorna anche IoU
+
+    def analyze_confidence_head(self, num_batches=30, save_plots=True):
+        """
+        Analizza la distribuzione dei pesi della confidence head.
+        
+        Questa analisi serve a capire se la confidence head sta effettivamente
+        imparando a distinguere regioni informative (pesi concentrati) o se
+        produce pesi quasi uniformi (non sta aiutando).
+        
+        Args:
+            num_batches: Numero di batch da analizzare (default: 30)
+            save_plots: Se True, salva i plot nella save_dir
+            
+        Returns:
+            dict con statistiche e interpretazione
+        """
+        print("\n" + "="*70)
+        print("🔍 CONFIDENCE HEAD ANALYSIS")
+        print("="*70)
+        
+        all_weights = []
+        all_max_weights = []
+        all_entropies = []
+        
+        self.model.eval()
+        
+        with torch.no_grad():
+            for batch_idx, batch in enumerate(tqdm(self.val_loader, desc="Analyzing confidence", total=num_batches)):
+                if batch_idx >= num_batches:
+                    break
+                
+                paths = batch['path']
+                depth_paths = batch['depth_path']
+                class_ids = batch['class_id'].numpy()
+                
+                # Process with YOLO
+                result = self._process_yolo_batch_wIoU(paths, depth_paths, class_ids)
+                
+                # ============================================
+                # FIX: Unpack correttamente tutti i 6 valori
+                # ============================================
+                rgb_batch, depth_batch, bbox_batch, valid_indices = result
+                
+                if len(valid_indices) == 0:
+                    continue
+                
+                rgb_batch = rgb_batch.to(self.device)
+                depth_batch = depth_batch.to(self.device)
+                #mask_batch = mask_batch.to(self.device)  # Aggiungi anche la mask
+                bbox_batch = bbox_batch.to(self.device)
+                
+                B = rgb_batch.shape[0]
+                cam_params = self.cam_params_norm.unsqueeze(0).repeat(B, 1).to(self.device)
+                
+                # === EXTRACT CONFIDENCE WEIGHTS ===
+                # Replica la forward del modello fino ai pesi
+                
+                # Forward fusion - PASSA ANCHE LA MASK!
+                #fused_feat, rgb_enh, depth_enh = self.model._forward_fusion(rgb_batch, depth_batch, mask_batch)
+                fused_feat, rgb_enh, depth_enh = self.model._forward_fusion(rgb_batch, depth_batch)
+
+                
+                # Prepara input per confidence head
+                bb_spatial = bbox_batch.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, 7, 7)
+                cam_spatial = cam_params.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, 7, 7)
+                
+                # Calcola confidence logits
+                conf_input = torch.cat([fused_feat, rgb_enh, bb_spatial, cam_spatial], dim=1)
+                conf_logits = self.model.conf_head(conf_input)  # [B, 1, 7, 7]
+                conf_logits = conf_logits.view(B, 1, -1)  # [B, 1, 49]
+                
+                # Applica softmax con temperature
+                weights = F.softmax(conf_logits / self.model.temperature, dim=2)  # [B, 1, 49]
+                weights = weights.squeeze(1)  # [B, 49]
+                
+                # Salva per analisi
+                all_weights.append(weights.cpu().numpy())
+        
+        # Concatena tutti i pesi
+        all_weights = np.concatenate(all_weights, axis=0)  # [N, 49]
+        
+        # === CALCOLA STATISTICHE ===
+        uniform = 1.0 / 49  # ~0.0204
+        
+        max_w = all_weights.max(axis=1).mean()
+        min_w = all_weights.min(axis=1).mean()
+        std_w = all_weights.std(axis=1).mean()
+        
+        # Entropia (misura di uniformità)
+        # Max entropy = log(49) ≈ 3.89 per distribuzione uniforme
+        entropies = -np.sum(all_weights * np.log(all_weights + 1e-10), axis=1)
+        max_entropy = np.log(49)
+        norm_entropy = (entropies / max_entropy).mean()
+        
+        # Pixel dominanti (peso > 2x uniforme)
+        num_dominant = (all_weights > 2 * uniform).sum(axis=1).mean()
+        
+        # Effective number of pixels (exp(entropy))
+        effective_n = np.exp(entropies).mean()
+        
+        # === STAMPA REPORT ===
+        print(f"\n📊 STATISTICS ({len(all_weights)} samples analyzed):")
+        print(f"   Uniform reference:     {uniform:.4f} (= 1/49)")
+        print(f"   Max weight (avg):      {max_w:.4f}  {'✅' if max_w > 2*uniform else '⚠️'}")
+        print(f"   Min weight (avg):      {min_w:.6f}")
+        print(f"   Std weight (avg):      {std_w:.4f}")
+        print(f"\n   Normalized entropy:    {norm_entropy:.3f}  ", end="")
+        
+        if norm_entropy > 0.95:
+            print("⚠️  QUASI UNIFORME!")
+        elif norm_entropy > 0.85:
+            print("⚡ Moderatamente concentrata")
+        else:
+            print("✅ Ben concentrata!")
+            
+        print(f"   Effective #pixels:     {effective_n:.1f} / 49")
+        print(f"   Dominant pixels (>2x): {num_dominant:.1f}")
+        
+        # === INTERPRETAZIONE ===
+        print(f"\n💡 INTERPRETAZIONE:")
+        if norm_entropy > 0.95:
+            print("   ⚠️  La confidence head produce pesi QUASI UNIFORMI.")
+            print("   → NON sta aiutando a selezionare regioni informative.")
+            print("   → Il weighted pooling è praticamente un average pooling.")
+            print("   → Considera di aggiungere la loss del paper DenseFusion:")
+            print("      L = (1/N) * Σ(L_add * c - w*log(c))")
+            print("   → Questo termine forza la rete a 'scommettere' su alcune regioni.")
+        elif norm_entropy > 0.85:
+            print("   ⚡ La confidence mostra una LEGGERA concentrazione.")
+            print("   → Sta iniziando a differenziare, ma potrebbe migliorare.")
+            print("   → La regolarizzazione potrebbe aiutare.")
+        else:
+            print("   ✅ La confidence head sta FUNZIONANDO!")
+            print("   → I pesi sono concentrati su alcune regioni.")
+            print("   → Il weighted pooling sta effettivamente selezionando.")
+        
+        print("="*70 + "\n")
+        
+        # === GENERA PLOT ===
+        if save_plots:
+            self._plot_confidence_analysis(all_weights, norm_entropy, uniform)
+        
+        return {
+            'norm_entropy': norm_entropy,
+            'max_weight': max_w,
+            'min_weight': min_w,
+            'std_weight': std_w,
+            'effective_n': effective_n,
+            'num_dominant': num_dominant,
+            'all_weights': all_weights,
+            'is_working': norm_entropy < 0.85
+        }
+    
+    def _plot_confidence_analysis(self, all_weights, norm_entropy, uniform):
+        """Genera e salva i plot dell'analisi confidence."""
+        
+        fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+        fig.suptitle(f'Confidence Head Analysis (Normalized Entropy: {norm_entropy:.3f})', 
+                     fontsize=14, fontweight='bold')
+        
+        # 1. Istogramma dei pesi
+        ax1 = axes[0, 0]
+        ax1.hist(all_weights.flatten(), bins=50, color='steelblue', edgecolor='black', alpha=0.7)
+        ax1.axvline(x=uniform, color='red', linestyle='--', linewidth=2, label=f'Uniform (1/49 = {uniform:.4f})')
+        ax1.set_xlabel('Weight Value', fontsize=12)
+        ax1.set_ylabel('Frequency', fontsize=12)
+        ax1.set_title('Distribution of All Confidence Weights', fontsize=12, fontweight='bold')
+        ax1.legend()
+        ax1.grid(alpha=0.3)
+        
+        # 2. Heatmap media dei pesi 7x7
+        ax2 = axes[0, 1]
+        mean_weight_map = all_weights.mean(axis=0).reshape(7, 7)
+        im = ax2.imshow(mean_weight_map, cmap='hot', interpolation='nearest')
+        ax2.set_title('Mean Confidence Weight Map (7x7)', fontsize=12, fontweight='bold')
+        plt.colorbar(im, ax=ax2, label='Weight')
+        ax2.set_xlabel('Spatial X')
+        ax2.set_ylabel('Spatial Y')
+        
+        # Aggiungi valori nelle celle
+        for i in range(7):
+            for j in range(7):
+                val = mean_weight_map[i, j]
+                color = 'white' if val > mean_weight_map.mean() else 'black'
+                ax2.text(j, i, f'{val:.3f}', ha='center', va='center', 
+                        fontsize=7, color=color, fontweight='bold')
+        
+        # 3. Box plot per alcune posizioni spaziali
+        ax3 = axes[1, 0]
+        # Seleziona alcune posizioni interessanti: angoli e centro
+        positions_to_show = [0, 3, 6, 21, 24, 27, 42, 45, 48]  # angoli + centro
+        position_labels = ['TL', 'TM', 'TR', 'ML', 'C', 'MR', 'BL', 'BM', 'BR']
+        
+        data_to_plot = [all_weights[:, p] for p in positions_to_show]
+        bp = ax3.boxplot(data_to_plot, labels=position_labels, showfliers=False)
+        ax3.axhline(y=uniform, color='red', linestyle='--', linewidth=1, label='Uniform')
+        ax3.set_xlabel('Spatial Position', fontsize=12)
+        ax3.set_ylabel('Weight', fontsize=12)
+        ax3.set_title('Weight Distribution at Key Positions', fontsize=12, fontweight='bold')
+        ax3.legend()
+        ax3.grid(alpha=0.3)
+        
+        # 4. Distribuzione dell'entropia normalizzata
+        ax4 = axes[1, 1]
+        entropies = -np.sum(all_weights * np.log(all_weights + 1e-10), axis=1)
+        normalized_entropies = entropies / np.log(49)
+        
+        ax4.hist(normalized_entropies, bins=30, color='green', edgecolor='black', alpha=0.7)
+        ax4.axvline(x=1.0, color='red', linestyle='--', linewidth=2, label='Max (uniform)')
+        ax4.axvline(x=norm_entropy, color='blue', linestyle='-', linewidth=2, 
+                    label=f'Mean: {norm_entropy:.3f}')
+        ax4.axvline(x=0.85, color='orange', linestyle=':', linewidth=2, label='Good threshold')
+        ax4.set_xlabel('Normalized Entropy', fontsize=12)
+        ax4.set_ylabel('Frequency', fontsize=12)
+        ax4.set_title('Entropy Distribution (1.0 = Uniform, <0.85 = Good)', fontsize=12, fontweight='bold')
+        ax4.legend()
+        ax4.grid(alpha=0.3)
+        
+        plt.tight_layout()
+        
+        # Salva
+        save_path = os.path.join(self.cfg['save_dir'], 'confidence_head_analysis.png')
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        print(f"📊 Confidence analysis plot saved to: {save_path}")
+        
+        plt.show()
 
     
     def run(self):
