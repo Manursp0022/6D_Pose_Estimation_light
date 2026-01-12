@@ -39,34 +39,21 @@ class DenseFusion_NetVar(nn.Module):
             nn.Conv2d(512, 512, kernel_size=3, padding=1),
             nn.BatchNorm2d(512)
         )
-        
-        # Pixel wise heads
-        # Rot Head
-        # --- NUOVE TESTE DI PREDIZIONE ---
-        
-        # Rot Head: Fused + RGB (512 + 512 = 1024)
+
         self.rot_head = nn.Sequential(
             nn.Conv2d(1024, 256, 1), 
             nn.ReLU(),
             nn.Conv2d(256, 4, 1)    
         )
         
-        # XY Head: Fused + BB + Cam (512 + 4 + 4 = 520)
-        self.xy_head = nn.Sequential(
-            nn.Conv2d(520, 128, 1), 
+        # Trans Head
+        self.trans_head = nn.Sequential(
+            nn.Conv2d(520, 256, 1),
             nn.ReLU(),
-            nn.Conv2d(128, 2, 1)    
-        )
-        
-        # Z Head: Fused + Depth (512 + 512 = 1024)
-        self.z_head = nn.Sequential(
-            nn.Conv2d(1024, 128, 1),
-            nn.ReLU(),
-            nn.Conv2d(128, 1, 1)
+            nn.Conv2d(256, 3, 1)    
         )
 
         self.global_pool = nn.AdaptiveAvgPool2d(1)
-
 
     def forward(self, rgb, depth, bb_info, cam_params):
             bs = rgb.size(0)
@@ -97,16 +84,8 @@ class DenseFusion_NetVar(nn.Module):
             pred_r = F.normalize(pred_r + self.eps, p=2, dim=1)
 
             # XY (Fused + BB + Cam)
-            xy_input = torch.cat([fused_feat, bb_spatial, cam_spatial], dim=1)
-            pred_xy_map = self.xy_head(xy_input)
-            pred_xy = self.global_pool(pred_xy_map).view(bs, 2)
-
-            # Z (Fused + Depth)
-            z_input = torch.cat([fused_feat, depth_feat], dim=1)
-            pred_z_map = self.z_head(z_input)
-            pred_z = self.global_pool(pred_z_map).view(bs, 1)
-
-            # 5. Combinazione della Traslazione Finale [X, Y, Z]
-            pred_t = torch.cat([pred_xy, pred_z], dim=1) # [B, 3]
+            trans_input = torch.cat([fused_feat, bb_spatial, cam_spatial], dim=1)
+            pred_trans_map = self.trans_head(trans_input)
+            pred_t = self.global_pool(pred_trans_map).view(bs, 3)
 
             return pred_r, pred_t

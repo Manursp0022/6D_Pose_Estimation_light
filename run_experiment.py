@@ -9,6 +9,71 @@ from PoseNet_evaluation import PoseNetEvaluator
 from Trainer_A100 import DAMFTurboTrainerA100
 
 if __name__ == "__main__":
+
+    config = {
+        # Percorsi
+        'dataset_root': "/Users/emanuelerosapepe/Desktop/test_YOLO/Linemod_preprocessed",  
+        'split_val': "data/autosplit_val_ALL.txt",  
+        'model_dir': 'checkpoints/', 
+        'save_dir': 'checkpoints_results/',
+        'model_old': False,
+        'training_mode': 'easy',
+        'yolo_model_path': 'checkpoints/final_best_seg_YOLO.pt' ,
+        'temperature': 2.0,
+        # Parametri
+        'batch_size': 32,
+        'num_workers': 12,  # 0 su Mac, 4-8 su Linux
+    }
+
+    evaluator = DAMF_Evaluator_WMask(config)
+    
+    # =========================================
+    # STEP 1: Analizza la confidence head
+    # =========================================
+    print("\n" + "="*70)
+    print("STEP 1: Analyzing confidence head...")
+    print("="*70)
+    
+    conf_results = evaluator.analyze_confidence_head(num_batches=32, save_plots=True)
+    
+    # Interpreta risultati
+    if conf_results['is_working']:
+        print("✅ La confidence head sta funzionando bene!")
+    else:
+        print("⚠️  La confidence head potrebbe non essere utile.")
+        print("   Considera di aggiungere la regolarizzazione del paper.")
+
+
+
+    """
+    config = {
+        # Percorsi
+        'dataset_root': "/Users/emanuelerosapepe/Desktop/test_YOLO/Linemod_preprocessed",  
+        'split_val': "data/autosplit_val_ALL.txt",  
+        'model_dir': 'checkpoints/', 
+        'save_dir': 'checkpoints_results/',
+        'model_old': False,
+        'training_mode': 'easy',
+        'yolo_model_path': 'checkpoints/best_seg_YOLO.pt' ,
+        'temperature': 2.0,
+        # Parametri
+        'batch_size': 32,
+        'num_workers': 12,  # 0 su Mac, 4-8 su Linux
+    }
+    
+    # Crea directory output
+    os.makedirs(config['save_dir'], exist_ok=True)
+    
+    # Esegui valutazione
+    evaluator = DAMF_Evaluator_WMask(config)
+    results = evaluator.run()
+    
+    print("\n✅ Evaluation completed!")
+    print(f"Final Accuracy: {results['accuracy']:.2f}%")
+    print(f"Mean ADD: {results['mean_add_cm']:.2f} cm")
+    """
+
+    """
     config = {
         'dataset_root': '/Users/emanuelerosapepe/Desktop/test_YOLO/Linemod_preprocessed',
         'split_train': 'data/autosplit_train_ALL.txt',
@@ -39,68 +104,6 @@ if __name__ == "__main__":
 
     trainer = DAMFTurboTrainerA100(config)
     trainer.run()
-    
-    """
-    config = {
-        # Percorsi
-        'dataset_root': "/Users/emanuelerosapepe/Desktop/test_YOLO/Linemod_preprocessed",  
-        'split_val': "data/autosplit_val_ALL.txt",  
-        'model_dir': 'checkpoints/', 
-        'save_dir': 'checkpoints_results/',
-        'model_old': False,
-        'training_mode': 'easy',
-        'yolo_model_path': 'checkpoints/best_seg_YOLO.pt' ,
-        'temperature': 2.0,
-        # Parametri
-        'batch_size': 32,
-        'num_workers': 12,  # 0 su Mac, 4-8 su Linux
-    }
-    
-    # Crea directory output
-    os.makedirs(config['save_dir'], exist_ok=True)
-    
-    # Esegui valutazione
-    evaluator = DAMF_Evaluator(config)
-    results = evaluator.run()
-    
-    print("\n✅ Evaluation completed!")
-    print(f"Final Accuracy: {results['accuracy']:.2f}%")
-    print(f"Mean ADD: {results['mean_add_cm']:.2f} cm")
-    """
-    """
-    config = {
-        # Percorsi
-        'dataset_root': "/Users/emanuelerosapepe/Desktop/test_YOLO/Linemod_preprocessed",  
-        'split_val': "data/autosplit_val_ALL.txt",  
-        'model_dir': 'checkpoints/', 
-        'save_dir': 'checkpoints_results/',
-        'model_old': False,
-        'training_mode': 'easy',
-        'yolo_model_path': 'checkpoints/final_best_seg_YOLO.pt' ,
-        'temperature': 2.0,
-        # Parametri
-        'batch_size': 32,
-        'num_workers': 12,  # 0 su Mac, 4-8 su Linux
-    }
-
-    evaluator = DAMF_Evaluator(config)
-    
-    # =========================================
-    # STEP 1: Analizza la confidence head
-    # =========================================
-    print("\n" + "="*70)
-    print("STEP 1: Analyzing confidence head...")
-    print("="*70)
-    
-    conf_results = evaluator.analyze_confidence_head(num_batches=32, save_plots=True)
-    
-    # Interpreta risultati
-    if conf_results['is_working']:
-        print("✅ La confidence head sta funzionando bene!")
-    else:
-        print("⚠️  La confidence head potrebbe non essere utile.")
-        print("   Considera di aggiungere la regolarizzazione del paper.")
-
     """
 
     """

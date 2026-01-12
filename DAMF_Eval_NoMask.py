@@ -11,7 +11,6 @@ from ultralytics import YOLO
 import cv2
 import torch.nn.functional as F
 #from models.DFMasked_DualAtt_NetVar_WRefiner import DenseFusion_Masked_DualAtt_NetVarWRef
-from models.DFMasked_DualAtt_Net import DenseFusion_Masked_DualAtt_Net
 from models.DFMasked_DualAtt_NetVar import DenseFusion_Masked_DualAtt_NetVar
 from models.DFMasked_DualAtt_NetVarGlobal import DenseFusion_Masked_DualAtt_NetVarGlobal
 from models.DFMasked_DualAtt_NetVarNoMask import DenseFusion_Masked_DualAtt_NetVarNoMask
@@ -162,7 +161,7 @@ class DAMF_Evaluator:
             temperature=self.cfg.get('temperature', 1.5)
         ).to(self.device)
         """
-        model = DenseFusion_NetVar(
+        model = DenseFusion_Masked_DualAtt_NetVar(
             pretrained=False,  # Non servono pesi ImageNet, carichiamo i tuoi
             temperature=self.cfg.get('temperature', 2.0)
         ).to(self.device)
@@ -171,9 +170,8 @@ class DAMF_Evaluator:
         #weights_path = os.path.join(self.cfg['model_dir'], 'DenseFusion_Masked_DualAtt_NetVar_Dropout.pth')
         #weights_path = os.path.join(self.cfg['model_dir'], 'DenseFusion_Masked_DualAtt_NetVarRefinerHard.pth')
         #weights_path = os.path.join(self.cfg['model_dir'], 'DenseFusion_Att_NOMask_Top.pth')
+        #weights_path = os.path.join(self.cfg['model_dir'], 'DenseFusion_NetVar_Zhead.pth')
         weights_path = os.path.join(self.cfg['model_dir'], 'DenseFusion__NetVar.pth')
-        
-        #weights_path = os.path.join(self.cfg['model_dir'], 'DenseFusion__NetVar.pth')
 
 
         """
