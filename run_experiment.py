@@ -17,32 +17,29 @@ if __name__ == "__main__":
         'model_dir': 'checkpoints/', 
         'save_dir': 'checkpoints_results/',
         'model_old': False,
-        'training_mode': 'easy',
-        'yolo_model_path': 'checkpoints/final_best_seg_YOLO.pt' ,
-        'temperature': 2.0,
+        'training_mode': 'hard',
+        'yolo_model_path': 'checkpoints/bestyolov11.pt' ,
+        'temperature': 1.5,
         # Parametri
-        'batch_size': 32,
+        'batch_size': 64,
         'num_workers': 12,  # 0 su Mac, 4-8 su Linux
     }
 
     evaluator = DAMF_Evaluator_WMask(config)
+    conf_results = evaluator.analyze_confidence_head(num_batches=32, save_plots=True)
     
     # =========================================
     # STEP 1: Analizza la confidence head
     # =========================================
     print("\n" + "="*70)
     print("STEP 1: Analyzing confidence head...")
-    print("="*70)
-    
-    conf_results = evaluator.analyze_confidence_head(num_batches=32, save_plots=True)
-    
+    print("="*70)    
     # Interpreta risultati
     if conf_results['is_working']:
         print("✅ La confidence head sta funzionando bene!")
     else:
         print("⚠️  La confidence head potrebbe non essere utile.")
         print("   Considera di aggiungere la regolarizzazione del paper.")
-
 
 
     """

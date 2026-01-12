@@ -8,6 +8,7 @@ from plyfile import PlyData
 from scipy.spatial.transform import Rotation as R
 import cv2
 from torchvision import transforms
+from torch.cuda.amp import autocast # <--- IMPORT
 from ultralytics import YOLO
 #from models.DFMasked_DualAtt_NetVar_WRefiner import DenseFusion_Masked_DualAtt_NetVarWRef
 from models.DFMasked_DualAtt_NetVar import DenseFusion_Masked_DualAtt_NetVar
@@ -25,6 +26,12 @@ class DAMF_Evaluator_WMask:
         self.cfg = config
         self.device = self._get_device()
         print(f"🔧 Initializing DAMF Evaluator on: {self.device}")
+
+        # --- OTTIMIZZAZIONE GPU ---
+        if self.device.type == 'cuda':
+            torch.backends.cudnn.benchmark = True
+            # Se hai GPU serie 30xx o 40xx (Ampere/Ada):
+            torch.backends.cuda.matmul.allow_tf32 = True
 
         # Diametri oggetti LineMOD (mm)
         self.DIAMETERS = {
@@ -268,171 +275,6 @@ class DAMF_Evaluator_WMask:
         quats_scipy = np.concatenate([quats[:, 1:], quats[:, 0:1]], axis=1)
         
         return R.from_quat(quats_scipy).as_matrix()
-
-    def _calculate_iou(self, mask1, mask2):
-        """
-        Calcola Intersection over Union tra due maschere binarie (numpy arrays).
-        """
-        # Assicuriamoci che siano booleani o 0/1
-        m1 = (mask1 > 0).astype(bool)
-        m2 = (mask2 > 0).astype(bool)
-        
-        intersection = np.logical_and(m1, m2).sum()
-        union = np.logical_or(m1, m2).sum()
-        
-        if union == 0:
-            return 0.0
-        return (intersection / union) * 100.0
-    
-    def analyze_confidence_head(self, num_batches=30, save_plots=True):
-        """
-        Analizza la distribuzione dei pesi della confidence head.
-        
-        Questa analisi serve a capire se la confidence head sta effettivamente
-        imparando a distinguere regioni informative (pesi concentrati) o se
-        produce pesi quasi uniformi (non sta aiutando).
-        
-        Args:
-            num_batches: Numero di batch da analizzare (default: 30)
-            save_plots: Se True, salva i plot nella save_dir
-            
-        Returns:
-            dict con statistiche e interpretazione
-        """
-        print("\n" + "="*70)
-        print("🔍 CONFIDENCE HEAD ANALYSIS")
-        print("="*70)
-        
-        all_weights = []
-        all_max_weights = []
-        all_entropies = []
-        
-        self.model.eval()
-        
-        with torch.no_grad():
-            for batch_idx, batch in enumerate(tqdm(self.val_loader, desc="Analyzing confidence", total=num_batches)):
-                if batch_idx >= num_batches:
-                    break
-                
-                paths = batch['path']
-                depth_paths = batch['depth_path']
-                class_ids = batch['class_id'].numpy()
-                
-                # Process with YOLO
-                result = self._process_yolo_batch_wIoU(paths, depth_paths, class_ids)
-                
-                # ============================================
-                # FIX: Unpack correttamente tutti i 6 valori
-                # ============================================
-                rgb_batch, depth_batch, mask_batch, bbox_batch, valid_indices, batch_ious = result
-                
-                if len(valid_indices) == 0:
-                    continue
-                
-                rgb_batch = rgb_batch.to(self.device)
-                depth_batch = depth_batch.to(self.device)
-                mask_batch = mask_batch.to(self.device)  # Aggiungi anche la mask
-                bbox_batch = bbox_batch.to(self.device)
-                
-                B = rgb_batch.shape[0]
-                cam_params = self.cam_params_norm.unsqueeze(0).repeat(B, 1).to(self.device)
-                
-                # === EXTRACT CONFIDENCE WEIGHTS ===
-                # Replica la forward del modello fino ai pesi
-                
-                # Forward fusion - PASSA ANCHE LA MASK!
-                fused_feat, rgb_enh, depth_enh = self.model._forward_fusion(rgb_batch, depth_batch, mask_batch)
-                
-                # Prepara input per confidence head
-                bb_spatial = bbox_batch.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, 7, 7)
-                cam_spatial = cam_params.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, 7, 7)
-                
-                # Calcola confidence logits
-                conf_input = torch.cat([fused_feat, rgb_enh, bb_spatial, cam_spatial], dim=1)
-                conf_logits = self.model.conf_head(conf_input)  # [B, 1, 7, 7]
-                conf_logits = conf_logits.view(B, 1, -1)  # [B, 1, 49]
-                
-                # Applica softmax con temperature
-                weights = F.softmax(conf_logits / self.model.temperature, dim=2)  # [B, 1, 49]
-                weights = weights.squeeze(1)  # [B, 49]
-                
-                # Salva per analisi
-                all_weights.append(weights.cpu().numpy())
-        
-        # Concatena tutti i pesi
-        all_weights = np.concatenate(all_weights, axis=0)  # [N, 49]
-        
-        # === CALCOLA STATISTICHE ===
-        uniform = 1.0 / 49  # ~0.0204
-        
-        max_w = all_weights.max(axis=1).mean()
-        min_w = all_weights.min(axis=1).mean()
-        std_w = all_weights.std(axis=1).mean()
-        
-        # Entropia (misura di uniformità)
-        # Max entropy = log(49) ≈ 3.89 per distribuzione uniforme
-        entropies = -np.sum(all_weights * np.log(all_weights + 1e-10), axis=1)
-        max_entropy = np.log(49)
-        norm_entropy = (entropies / max_entropy).mean()
-        
-        # Pixel dominanti (peso > 2x uniforme)
-        num_dominant = (all_weights > 2 * uniform).sum(axis=1).mean()
-        
-        # Effective number of pixels (exp(entropy))
-        effective_n = np.exp(entropies).mean()
-        
-        # === STAMPA REPORT ===
-        print(f"\n📊 STATISTICS ({len(all_weights)} samples analyzed):")
-        print(f"   Uniform reference:     {uniform:.4f} (= 1/49)")
-        print(f"   Max weight (avg):      {max_w:.4f}  {'✅' if max_w > 2*uniform else '⚠️'}")
-        print(f"   Min weight (avg):      {min_w:.6f}")
-        print(f"   Std weight (avg):      {std_w:.4f}")
-        print(f"\n   Normalized entropy:    {norm_entropy:.3f}  ", end="")
-        
-        if norm_entropy > 0.95:
-            print("⚠️  QUASI UNIFORME!")
-        elif norm_entropy > 0.85:
-            print("⚡ Moderatamente concentrata")
-        else:
-            print("✅ Ben concentrata!")
-            
-        print(f"   Effective #pixels:     {effective_n:.1f} / 49")
-        print(f"   Dominant pixels (>2x): {num_dominant:.1f}")
-        
-        # === INTERPRETAZIONE ===
-        print(f"\n💡 INTERPRETAZIONE:")
-        if norm_entropy > 0.95:
-            print("   ⚠️  La confidence head produce pesi QUASI UNIFORMI.")
-            print("   → NON sta aiutando a selezionare regioni informative.")
-            print("   → Il weighted pooling è praticamente un average pooling.")
-            print("   → Considera di aggiungere la loss del paper DenseFusion:")
-            print("      L = (1/N) * Σ(L_add * c - w*log(c))")
-            print("   → Questo termine forza la rete a 'scommettere' su alcune regioni.")
-        elif norm_entropy > 0.85:
-            print("   ⚡ La confidence mostra una LEGGERA concentrazione.")
-            print("   → Sta iniziando a differenziare, ma potrebbe migliorare.")
-            print("   → La regolarizzazione potrebbe aiutare.")
-        else:
-            print("   ✅ La confidence head sta FUNZIONANDO!")
-            print("   → I pesi sono concentrati su alcune regioni.")
-            print("   → Il weighted pooling sta effettivamente selezionando.")
-        
-        print("="*70 + "\n")
-        
-        # === GENERA PLOT ===
-        if save_plots:
-            self._plot_confidence_analysis(all_weights, norm_entropy, uniform)
-        
-        return {
-            'norm_entropy': norm_entropy,
-            'max_weight': max_w,
-            'min_weight': min_w,
-            'std_weight': std_w,
-            'effective_n': effective_n,
-            'num_dominant': num_dominant,
-            'all_weights': all_weights,
-            'is_working': norm_entropy < 0.85
-        }
     
     def _plot_confidence_analysis(self, all_weights, norm_entropy, uniform):
         """Genera e salva i plot dell'analisi confidence."""
@@ -508,7 +350,7 @@ class DAMF_Evaluator_WMask:
         
         plt.show()
         
-    def _process_yolo_batch(self, rgb_paths, depth_paths, class_ids):
+    def _process_yolo_batch_optimized(self, rgb_full_batch, depth_full_batch, class_ids):
             """
             Processa un batch di immagini con YOLO.
             Ritorna rgb, depth, mask, bbox tutti croppati e pronti, più gli indici validi.
@@ -517,7 +359,7 @@ class DAMF_Evaluator_WMask:
                 rgb_batch, depth_batch, mask_batch, bbox_batch: tensori solo per sample validi
                 valid_indices: lista degli indici originali del batch che sono stati processati
             """
-            batch_size = len(rgb_paths)
+            batch_size = rgb_full_batch.shape[0]
             
             rgb_list = []
             depth_list = []
@@ -526,16 +368,16 @@ class DAMF_Evaluator_WMask:
             valid_indices = []  # Traccia quali sample sono validi
             
             # YOLO inference su tutte le immagini del batch
-            yolo_results = self.yolo_model(list(rgb_paths), conf=self.YOLO_CONF, verbose=False)
+            results = self.yolo_model(list(rgb_full_batch), conf=self.YOLO_CONF, verbose=False)
             
-            for i in range(batch_size):
-                rgb_path = rgb_paths[i]
-                depth_path = depth_paths[i]
+            for i, res in enumerate(results):
+                #rgb_path = rgb_paths[i]
+                #depth_path = depth_paths[i]
                 obj_id = int(class_ids[i])
                 target_yolo_class = self.LINEMOD_TO_YOLO[obj_id]
                 
                 # Prendi risultato YOLO per questa immagine
-                yolo_res = yolo_results[i]
+                yolo_res = res[i]
                 
                 # Trova la detection per la classe target (prendi quella con conf più alta)
                 boxes = yolo_res.boxes
@@ -552,11 +394,11 @@ class DAMF_Evaluator_WMask:
                     continue
                 
                 # Carica RGB
-                rgb_img = cv2.cvtColor(cv2.imread(rgb_path), cv2.COLOR_BGR2RGB)
+                rgb_img_numpy = (rgb_full_batch[i].permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
                 
                 # Carica Depth originale
-                depth_img = cv2.imread(depth_path, cv2.IMREAD_UNCHANGED).astype(np.float32) / 1000.0
-                
+                depth_img_numpy = depth_full_batch[i][0].cpu().numpy() 
+
                 # Estrai bbox [x_min, y_min, w, h]
                 xyxy = boxes.xyxy[best_idx].cpu().numpy()
                 bbox = [xyxy[0], xyxy[1], xyxy[2] - xyxy[0], xyxy[3] - xyxy[1]]
@@ -568,8 +410,9 @@ class DAMF_Evaluator_WMask:
                 mask = (mask_data > 0.5).astype(np.uint8) * 255
                 
                 # Crop & Resize
-                rgb_crop = crop_square_resize(rgb_img, bbox, self.img_size, is_depth=False)
-                depth_crop = crop_square_resize(depth_img, bbox, self.img_size, is_depth=True)
+                rgb_crop = crop_square_resize(rgb_img_numpy, bbox, self.img_size, is_depth=False)
+                depth_crop = crop_square_resize(depth_img_numpy, bbox, self.img_size, is_depth=True)
+
                 mask_crop = crop_square_resize(mask, bbox, self.img_size, is_depth=True)
                 mask_crop = (mask_crop > 127).astype(np.float32)
                 
@@ -602,98 +445,6 @@ class DAMF_Evaluator_WMask:
             bbox_batch = torch.stack(bbox_list)    # [N, 4]
             
             return rgb_batch, depth_batch, mask_batch, bbox_batch, valid_indices
-
-    def _process_yolo_batch_wIoU(self, rgb_paths, depth_paths, class_ids):
-        batch_size = len(rgb_paths)
-        
-        rgb_list = []
-        depth_list = []
-        mask_list = []
-        bbox_list = []
-        valid_indices = []
-        
-        # Lista per salvare le IoU di questo batch
-        batch_ious = [] 
-        
-        yolo_results = self.yolo_model(list(rgb_paths), conf=self.YOLO_CONF, verbose=False)
-        
-        for i in range(batch_size):
-            rgb_path = rgb_paths[i]
-            depth_path = depth_paths[i]
-            obj_id = int(class_ids[i])
-            target_yolo_class = self.LINEMOD_TO_YOLO[obj_id]
-            
-            # --- CARICAMENTO MASK GT (Per calcolo IoU) ---
-            # Assumiamo struttura standard LineMOD: .../rgb/1234.png -> .../mask/1234.png
-            mask_gt_path = rgb_path.replace('rgb', 'mask') 
-            # Se la cartella si chiama 'masks' invece di 'mask', adatta la stringa sopra!
-            
-            mask_gt = None
-            if os.path.exists(mask_gt_path):
-                 # Carica in scala di grigi
-                mask_gt = cv2.imread(mask_gt_path, cv2.IMREAD_GRAYSCALE)
-                mask_gt = (mask_gt > 127).astype(np.uint8) # Binarizza
-            # ---------------------------------------------
-
-            yolo_res = yolo_results[i]
-            
-            # Trova best box
-            boxes = yolo_res.boxes
-            best_idx = None
-            best_conf = 0.0
-            for j, (cls, conf) in enumerate(zip(boxes.cls, boxes.conf)):
-                if int(cls) == target_yolo_class and float(conf) > best_conf:
-                    best_conf = float(conf)
-                    best_idx = j
-            
-            if best_idx is None:
-                continue
-            
-            # ... (Caricamento RGB e Depth come prima) ...
-            rgb_img = cv2.cvtColor(cv2.imread(rgb_path), cv2.COLOR_BGR2RGB)
-            depth_img = cv2.imread(depth_path, cv2.IMREAD_UNCHANGED).astype(np.float32) / 1000.0
-            
-            xyxy = boxes.xyxy[best_idx].cpu().numpy()
-            bbox = [xyxy[0], xyxy[1], xyxy[2] - xyxy[0], xyxy[3] - xyxy[1]]
-            
-            # Maschera YOLO (Full Size)
-            mask_data = yolo_res.masks.data[best_idx].cpu().numpy()
-            if mask_data.shape != (self.img_h, self.img_w):
-                mask_data = cv2.resize(mask_data, (self.img_w, self.img_h), interpolation=cv2.INTER_NEAREST)
-            mask_yolo = (mask_data > 0.5).astype(np.uint8) * 255
-            
-            # --- CALCOLO IOU QUI ---
-            if mask_gt is not None:
-                iou = self._calculate_iou(mask_yolo, mask_gt)
-                batch_ious.append(iou)
-            else:
-                batch_ious.append(0.0) # Fallback se manca GT
-            # -----------------------
-
-            # Crop & Resize (Come prima)
-            rgb_crop = crop_square_resize(rgb_img, bbox, self.img_size, is_depth=False)
-            depth_crop = crop_square_resize(depth_img, bbox, self.img_size, is_depth=True)
-            mask_crop = crop_square_resize(mask_yolo, bbox, self.img_size, is_depth=True)
-            mask_crop = (mask_crop > 127).astype(np.float32)
-            
-            rgb_list.append(self.transform(rgb_crop))
-            depth_list.append(torch.from_numpy(depth_crop).float().unsqueeze(0))
-            mask_list.append(torch.from_numpy(mask_crop).float().unsqueeze(0))
-            
-            x, y, w, h = bbox
-            bbox_norm = torch.tensor([(x + w/2) / self.img_w, (y + h/2) / self.img_h, w / self.img_w, h / self.img_h], dtype=torch.float32)
-            bbox_list.append(bbox_norm)
-            valid_indices.append(i)
-        
-        if len(valid_indices) == 0:
-            return None, None, None, None, [], [] # Aggiungi lista vuota per IoU
-        
-        rgb_batch = torch.stack(rgb_list)
-        depth_batch = torch.stack(depth_list)
-        mask_batch = torch.stack(mask_list)
-        bbox_batch = torch.stack(bbox_list)
-        
-        return rgb_batch, depth_batch, mask_batch, bbox_batch, valid_indices, batch_ious # Ritorna anche IoU
 
     def run(self):
         """
@@ -728,9 +479,7 @@ class DAMF_Evaluator_WMask:
         # --- NUOVO: Liste per X, Y, Z ---
         all_tx_errors = []
         all_ty_errors = []
-        all_tz_errors = []
-
-        all_ious = [] 
+        all_tz_errors = [] 
         
         self.model.eval()
         
@@ -741,18 +490,19 @@ class DAMF_Evaluator_WMask:
                 #rgb_batch = batch['image'].to(self.device)
                 #mask_batch = batch['mask'].to(self.device)
 
-                paths = batch['path']
-                depth_paths = batch['depth_path']
-                depth_batch = batch['depth']#.to(self.device)
+                #paths = batch['path']
+                #depth_paths = batch['depth_path']
+                #depth_batch = batch['depth']#.to(self.device)
                 cam_params = batch['cam_params']#.to(self.device, non_blocking=True)
                 #bb_info = batch['bbox_norm'].to(self.device, non_blocking=True)
                 gt_translation = batch['translation'].cpu().numpy()  # [B, 3]
                 gt_quats = batch['quaternion']  # [B, 4]
                 class_ids = batch['class_id'].numpy()  # [B]
-
+                rgb_full_batch = batch['image_full']
+                depth_full_batch = batch['depth_full']
                 # Processa con YOLO (ritorna solo sample validi)
-                rgb_batch, depth_batch, mask_batch, bbox_batch, valid_indices, batch_ious = self._process_yolo_batch_wIoU(
-                    paths, depth_paths, class_ids
+                rgb_batch, depth_batch, mask_batch, bbox_batch, valid_indices = self._process_yolo_batch_optimized(
+                    rgb_full_batch, depth_full_batch, class_ids
                 )
 
                 # Conta YOLO misses per questo batch
@@ -772,8 +522,6 @@ class DAMF_Evaluator_WMask:
                 if num_valid == 0:
                     continue
 
-                all_ious.extend(batch_ious)
-
                 rgb_batch = rgb_batch.to(self.device)
                 depth_batch = depth_batch.to(self.device)
                 mask_batch = mask_batch.to(self.device)
@@ -783,8 +531,8 @@ class DAMF_Evaluator_WMask:
                 cam_params = self.cam_params_norm.unsqueeze(0).repeat(B, 1).to(self.device)
 
                 
-                # 1. INFERENCE del modello
-                pred_quats, pred_trans = self.model(rgb_batch, depth_batch, bbox_batch, cam_params, mask_batch)
+                with autocast():
+                    pred_quats, pred_trans = self.model(rgb_batch, depth_batch, bbox_batch, cam_params, mask_batch)
                 
                 # 2. Converti quaternioni in matrici di rotazione
                 pred_R = self._quaternion_to_matrix(pred_quats)  # [B, 3, 3]
@@ -865,12 +613,7 @@ class DAMF_Evaluator_WMask:
         mean_ty = np.mean(all_ty_errors) if len(all_ty_errors) > 0 else 0.0
         mean_tz = np.mean(all_tz_errors) if len(all_tz_errors) > 0 else 0.0
 
-        mean_iou = np.mean(all_ious) if len(all_ious) > 0 else 0.0
-        print(f"\n🎭 MASK QUALITY REPORT:")
-        print(f"   Mean Mask IoU: {mean_iou:.2f}%")
-        if mean_iou < 85.0:
-            print("   ⚠️ WARNING: Mask Quality is low! This explains the accuracy drop.")
-        
+
         # 5. Stampa report
         self._print_report(accuracy, mean_add_cm, mean_trans, mean_rot_cm, mean_rot_deg, 
                            mean_tx, mean_ty, mean_tz,  # <--- Nuovi argomenti
