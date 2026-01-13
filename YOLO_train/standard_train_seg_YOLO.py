@@ -27,7 +27,6 @@ class yolo_seg_trainer:
         return config_path
 
     def train(self, config_path=None):
-        #dataset_root = "C:\Users\gabri\Desktop\AML_project\6D_Pose_Estimation_light\dataset\Linemod_preprocessed" if args["dataset_root"] is None else args["dataset_root"]
         if config_path is None:
             print(f"[INFO] No config path provided, create it using create_labels_and_config and pass it as argument.")
         print(f"___Starting training___")
@@ -51,8 +50,8 @@ class yolo_seg_trainer:
         )
 
 if __name__ == "__main__":
-    dataset_root = "C:\\Users\\gabri\\Desktop\\AML project\\6D_Pose_Estimation_light\\dataset\\Linemod_preprocessed"
-    config_path = "C:\\Users\\gabri\\Desktop\\AML project\\6D_Pose_Estimation_light\\dataset\\Linemod_preprocessed\\linemod_yolo_config_standard.yaml"
+    dataset_root = ""
+    config_path = ""
     trainer = yolo_seg_trainer(dataset_root=dataset_root, epochs=50)
     #config_path = trainer.create_labels_and_config()
     trainer.train(config_path=config_path)

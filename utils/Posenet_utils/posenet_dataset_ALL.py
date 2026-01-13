@@ -34,10 +34,8 @@ class LineModPoseDataset(Dataset):
             # Parsing del path
             parts = img_path_abs.split("/")
             #print(parts)
-            # Assumiamo struttura: .../data/{folder_id}/rgb/{filename}
-            # Se il path nel txt è relativo o diverso, aggiusta questi indici!
+            # we assume: .../data/{folder_id}/rgb/{filename}
 
-            #print(parts)
             folder_id = parts[-3] 
             img_name = parts[-1]
             img_id_num = int(img_name.replace('.png', '')) 

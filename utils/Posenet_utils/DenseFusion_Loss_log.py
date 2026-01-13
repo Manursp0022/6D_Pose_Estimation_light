@@ -56,9 +56,7 @@ class DenseFusionLoss(nn.Module):
                 diff = pred_pts[i] - gt_pts[i]
                 loss_add = torch.mean(torch.norm(diff, dim=1))
             
-            # --- METRICHE SEPARATE per monitoring (opzionale) ---
             if return_metrics or self.use_weighted:
-                # Rotation loss (trasforma punti solo con rotazione)
                 pred_pts_rot = torch.bmm(pred_R_mat[i:i+1], model_points[i:i+1].permute(0, 2, 1)).permute(0, 2, 1).squeeze(0)
                 gt_pts_rot = torch.bmm(gt_R_mat[i:i+1], model_points[i:i+1].permute(0, 2, 1)).permute(0, 2, 1).squeeze(0)
                 
@@ -76,7 +74,7 @@ class DenseFusionLoss(nn.Module):
                 rot_loss_sum += loss_rot.item()
                 trans_loss_sum += loss_trans.item()
             
-            # Scegli quale loss usare per training
+
             if self.use_weighted:
                 # Loss pesata (sperimentale)
                 loss_i = self.rot_weight * loss_rot + self.trans_weight * loss_trans

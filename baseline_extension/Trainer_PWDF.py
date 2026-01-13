@@ -9,10 +9,8 @@ from tqdm import tqdm
 from torch.utils.data import DataLoader
 from plyfile import PlyData
 from utils.Posenet_utils.posenet_dataset_ALL import LineModPoseDataset
-#from utils.Posenet_utils.posenet_dataset_Alt import LineModPoseDataset_Alt
 from utils.Posenet_utils.posenet_dataset_ALLMasked import LineModPoseDatasetMasked
 from utils.Posenet_utils.posenet_dataset_AltMasked import LineModPoseDataset_AltMasked
-#from models.DFMasked_DualAtt_NetVarNoMask import DFMasked_DualAtt_NetVarNoMask
 from models.DFMasked_DualAtt_NetVar import DenseFusion_Masked_DualAtt_NetVar
 from models.DFMasked_DualAtt_NetVarGlobal import DenseFusion_Masked_DualAtt_NetVarGlobal
 from models.DFMasked_DualAtt_NetVarNoMask import DenseFusion_Masked_DualAtt_NetVarNoMask

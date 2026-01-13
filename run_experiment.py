@@ -3,13 +3,13 @@ import re
 import torch
 from baseline_extension.PWDF_Eval_NoMask import DAMF_Evaluator
 from baseline_extension.PWDF_Eval_WMask import DAMF_Evaluator_WMask
-from baseline_extension.Trainer_A100 import DAMFTurboTrainerA100
+from baseline_extension.Trainer_PWDF import DAMFTurboTrainerA100
 
 if __name__ == "__main__":
 
     config = {
         # Percorsi
-        'dataset_root': "/Users/emanuelerosapepe/Desktop/test_YOLO/Linemod_preprocessed",  
+        'dataset_root': "",  
         'split_val': "data/autosplit_val_ALL.txt",  
         'model_dir': 'checkpoints/', 
         'save_dir': 'checkpoints_results/',
@@ -22,12 +22,11 @@ if __name__ == "__main__":
     }
     
     evaluator = DAMF_Evaluator_WMask(config)
-    evaluator.benchmark_inference(num_samples=500)
-    #results = evaluator.run()
+    results = evaluator.run()
     
-    #print("\n Evaluation completed!")
-    #print(f"Final Accuracy: {results['accuracy']:.2f}%")
-    #print(f"Mean ADD: {results['mean_add_cm']:.2f} cm")
+    print("\n Evaluation completed!")
+    print(f"Final Accuracy: {results['accuracy']:.2f}%")
+    print(f"Mean ADD: {results['mean_add_cm']:.2f} cm")
 
 
     """

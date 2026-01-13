@@ -25,16 +25,13 @@ class DenseFusion_Masked_DualAtt_NetVarNoMask(nn.Module):
 
         self.feat_dropout = nn.Dropout2d(p=0.3)
         self.head_dropout = nn.Dropout2d(p=0.15)
-        
-        #FUSION with RESIDUAL
-        # Input: 1024 -> Project to 512 -> Residual Block
+
         self.fusion_entry = nn.Sequential(
             nn.Conv2d(1024, 512, kernel_size=3, padding=1),
             nn.BatchNorm2d(512),
             nn.ReLU()
         )
         
-        # Residual Block interno alla fusione
         self.fusion_res = nn.Sequential(
             nn.Conv2d(512, 512, kernel_size=3, padding=1),
             nn.BatchNorm2d(512),
@@ -44,22 +41,19 @@ class DenseFusion_Masked_DualAtt_NetVarNoMask(nn.Module):
             nn.BatchNorm2d(512)
         )
         
-        # Pixel wise heads
-        # Rot Head
+
         self.rot_head = nn.Sequential(
             nn.Conv2d(1024, 256, 1), 
             nn.ReLU(),
             nn.Conv2d(256, 4, 1)    
         )
         
-        # Trans Head
         self.trans_head = nn.Sequential(
             nn.Conv2d(520, 256, 1), 
             nn.ReLU(),
             nn.Conv2d(256, 3, 1)    
         )
         
-        # Confidence Head (Output Logits per Softmax)
         self.conf_head = nn.Sequential(
             nn.Conv2d(1032, 128, 1),
             nn.ReLU(),
@@ -113,15 +107,11 @@ class DenseFusion_Masked_DualAtt_NetVarNoMask(nn.Module):
         # Normalize Quaternions (with Epsilon)
         pred_rot_map = F.normalize(pred_rot_map + self.eps, p=2, dim=1)
         
-        # --- WEIGHT CALCULATION ---
-        # Softmax with Temperature onlogits
         weights = F.softmax(conf_logits / self.temperature, dim=2) #[B, 1, 49]
         
-        # Weighted Average
         pred_rot_global = torch.sum(pred_rot_map * weights, dim=2)   #[B, 4]
         pred_trans_global = torch.sum(pred_trans_map * weights, dim=2) # [B, 3]
         
-        # Final Normalize
         pred_rot_global = F.normalize(pred_rot_global + self.eps, p=2, dim=1)
 
         return pred_rot_global, pred_trans_global
