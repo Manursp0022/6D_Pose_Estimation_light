@@ -9,7 +9,7 @@ if __name__ == "__main__":
 
     config = {
         # Percorsi
-        'dataset_root': "/Users/emanuelerosapepe/Desktop/test_YOLO/Linemod_preprocessed",  
+        'dataset_root': "/home/niccolo/Torino/AML/Linemod_preprocessed/",  
         'split_val': "data/autosplit_val_ALL.txt",  
         'model_dir': 'checkpoints/', 
         'save_dir': 'checkpoints_results/',
