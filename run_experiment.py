@@ -17,7 +17,7 @@ if __name__ == "__main__":
         'training_mode': 'hard',
         'yolo_model_path': 'checkpoints/best_seg_YOLO.pt' ,
         'temperature': 1.5,
-        'batch_size': 1,
+        'batch_size': 32,
         'num_workers': 12,  
     }
     

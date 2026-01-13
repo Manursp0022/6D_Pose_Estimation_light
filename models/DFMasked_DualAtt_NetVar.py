@@ -61,12 +61,35 @@ class DenseFusion_Masked_DualAtt_NetVar(nn.Module):
             rgb = rgb * mask
             depth = depth * mask
         
-        rgb_feat = self.rgb_extractor(rgb)       
-        depth_3ch = torch.cat([depth, depth, depth], dim=1)
-        depth_feat = self.depth_extractor(depth_3ch) 
+        if rgb.is_cuda:
+            # Create streams for parallel execution
+            rgb_stream = torch.cuda.Stream()
+            depth_stream = torch.cuda.Stream()
+            
+            # Wait for current stream
+            rgb_stream.wait_stream(torch.cuda.current_stream())
+            depth_stream.wait_stream(torch.cuda.current_stream())
+            
+            with torch.cuda.stream(rgb_stream):
+                rgb_feat = self.rgb_extractor(rgb)       
+                rgb_feat = self.feat_dropout(rgb_feat)
 
-        rgb_feat = self.feat_dropout(rgb_feat)
-        depth_feat = self.feat_dropout(depth_feat)
+            with torch.cuda.stream(depth_stream):
+                depth_3ch = torch.cat([depth, depth, depth], dim=1)
+                depth_feat = self.depth_extractor(depth_3ch) 
+                depth_feat = self.feat_dropout(depth_feat)
+            
+            # Synchronize streams with current stream
+            torch.cuda.current_stream().wait_stream(rgb_stream)
+            torch.cuda.current_stream().wait_stream(depth_stream)
+        else:
+            # Fallback for CPU
+            rgb_feat = self.rgb_extractor(rgb)       
+            depth_3ch = torch.cat([depth, depth, depth], dim=1)
+            depth_feat = self.depth_extractor(depth_3ch) 
+
+            rgb_feat = self.feat_dropout(rgb_feat)
+            depth_feat = self.feat_dropout(depth_feat)
 
         rgb_enhanced = rgb_feat 
         depth_enhanced = depth_feat 

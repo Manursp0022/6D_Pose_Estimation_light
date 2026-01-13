@@ -18,6 +18,7 @@ from utils.Posenet_utils.PoseEvaluator import PoseEvaluator
 from utils.Posenet_utils.posenet_dataset_AltMasked import LineModPoseDataset_AltMasked
 from utils.Posenet_utils.posenet_dataset_ALLMasked import LineModPoseDatasetMasked
 from utils.Posenet_utils.utils_geometric import crop_square_resize
+import time
 
 class DAMF_Evaluator_WMask:
     
@@ -221,6 +222,7 @@ class DAMF_Evaluator_WMask:
     def _remove_compile_prefix(self, state_dict):
         """
         Rimuove il prefisso '_orig_mod.' dai pesi salvati con torch.compile().
+        Anche gestisce la rinomina da conf_head a att_head se necessaria.
         
         Args:
             state_dict: State dict con o senza prefisso
@@ -231,8 +233,13 @@ class DAMF_Evaluator_WMask:
         new_state_dict = {}
         for key, value in state_dict.items():
             # Rimuovi il prefisso '_orig_mod.' se presente
-            new_key = key.replace('_orig_mod.', '') if key.startswith('_orig_mod.') else key
-            new_state_dict[new_key] = value
+            key = key.replace('_orig_mod.', '') if key.startswith('_orig_mod.') else key
+            
+            # # Gestisci il rename da conf_head a att_head
+            # if "conf_head" in key:
+            #     key = key.replace("conf_head", "att_head")
+                
+            new_state_dict[key] = value
         return new_state_dict
 
     def _quaternion_to_matrix(self, quats):
@@ -582,7 +589,14 @@ class DAMF_Evaluator_WMask:
         # Lista per salvare le IoU di questo batch
         batch_ious = [] 
         
+        if self.device.type == 'cuda':
+            torch.cuda.synchronize()
+        start_yolo = time.time()
         yolo_results = self.yolo_model(list(rgb_paths), conf=self.YOLO_CONF, verbose=False)
+        if self.device.type == 'cuda':
+            torch.cuda.synchronize()
+        end_yolo = time.time()
+        # print(f"YOLO inference time per image: {(end_yolo - start_yolo) / batch_size:.6f} s")
         
         for i in range(batch_size):
             rgb_path = rgb_paths[i]
@@ -647,14 +661,14 @@ class DAMF_Evaluator_WMask:
             valid_indices.append(i)
         
         if len(valid_indices) == 0:
-            return None, None, None, None, [], [] 
+            return None, None, None, None, [], [], (end_yolo - start_yolo)
         
         rgb_batch = torch.stack(rgb_list)
         depth_batch = torch.stack(depth_list)
         mask_batch = torch.stack(mask_list)
         bbox_batch = torch.stack(bbox_list)
         
-        return rgb_batch, depth_batch, mask_batch, bbox_batch, valid_indices, batch_ious 
+        return rgb_batch, depth_batch, mask_batch, bbox_batch, valid_indices, batch_ious, (end_yolo - start_yolo) 
 
     def run(self):
         """
@@ -692,6 +706,12 @@ class DAMF_Evaluator_WMask:
 
         all_ious = [] 
         
+        # Timing statistics
+        timing_stats = {
+            obj_id: {'yolo': [], 'model': []}
+            for obj_id in self.DIAMETERS.keys()
+        }
+        
         self.model.eval()
         
         with torch.no_grad():
@@ -709,12 +729,19 @@ class DAMF_Evaluator_WMask:
                 gt_quats = batch['quaternion']  # [B, 4]
                 class_ids = batch['class_id'].numpy()  # [B]
 
-                rgb_batch, depth_batch, mask_batch, bbox_batch, valid_indices, batch_ious = self._process_yolo_batch_wIoU(
+                rgb_batch, depth_batch, mask_batch, bbox_batch, valid_indices, batch_ious, yolo_duration = self._process_yolo_batch_wIoU(
                     paths, depth_paths, class_ids
                 )
 
-                # yolo misses
+                # Collect YOLO timing
                 batch_size = len(paths)
+                yolo_time_per_img = yolo_duration / batch_size
+                for obj_id in class_ids:
+                    obj_id = int(obj_id)
+                    if obj_id in timing_stats:
+                        timing_stats[obj_id]['yolo'].append(yolo_time_per_img)
+
+                # yolo misses
                 num_valid = len(valid_indices)
                 num_missed = batch_size - num_valid
                 total_yolo_missed += num_missed
@@ -741,7 +768,24 @@ class DAMF_Evaluator_WMask:
 
                 
                 # 1. INFERENCE del modello
+                if self.device.type == 'cuda':
+                    torch.cuda.synchronize()
+                start_model = time.time()
                 pred_quats, pred_trans = self.model(rgb_batch, depth_batch, bbox_batch, cam_params, mask_batch)
+                if self.device.type == 'cuda':
+                    torch.cuda.synchronize()
+                end_model = time.time()
+                # print(f"Model inference time per image: {(end_model - start_model) / B:.6f} s")
+                
+                model_duration = end_model - start_model
+                model_time_per_img = model_duration / B
+                
+                # Collect Model timing for valid objects
+                valid_class_ids = class_ids[valid_indices]
+                for obj_id in valid_class_ids:
+                    obj_id = int(obj_id)
+                    if obj_id in timing_stats:
+                        timing_stats[obj_id]['model'].append(model_time_per_img)
                 
                 # 2. Converti quaternioni in matrici di rotazione
                 pred_R = self._quaternion_to_matrix(pred_quats)  # [B, 3, 3]
@@ -831,7 +875,7 @@ class DAMF_Evaluator_WMask:
         # 5. Stampa report
         self._print_report(accuracy, mean_add_cm, mean_trans, mean_rot_cm, mean_rot_deg, 
                            mean_tx, mean_ty, mean_tz,  # <--- Nuovi argomenti
-                           total_predictions,total_yolo_missed, class_stats) # <--- Fix class_stats        
+                           total_predictions,total_yolo_missed, class_stats, timing_stats) # <--- Fix class_stats        
         # 6. Genera plot
         self._plot_results(class_stats) 
         
@@ -965,7 +1009,7 @@ class DAMF_Evaluator_WMask:
             
     def _print_report(self, accuracy, mean_add, mean_trans, mean_rot_cm, mean_rot_deg, 
                         mean_tx, mean_ty, mean_tz,
-                        total, total_yolo_missed, class_stats):
+                        total, total_yolo_missed, class_stats, timing_stats=None):
             
             print("\n" + "="*60)
             print("FINAL REPORT (Detailed Breakdown)")
@@ -988,6 +1032,39 @@ class DAMF_Evaluator_WMask:
             print(f" -> Rotation (Angle):    {mean_rot_deg:.2f} deg")
             print("="*60)
             
+            # Print Timing Stats
+            if timing_stats:
+                print("\n" + "="*60)
+                print("⏱️  TIMING ANALYSIS (Avg time per image in seconds)")
+                print("="*60)
+                print(f"{'OBJECT':<12} {'YOLO':<10} {'MODEL':<10} {'TOTAL':<10}")
+                print("-" * 60)
+                
+                all_yolo = []
+                all_model = []
+                
+                for obj_id in sorted(list(timing_stats.keys())):
+                    t_yolo = timing_stats[obj_id]['yolo']
+                    t_model = timing_stats[obj_id]['model']
+                    
+                    if not t_yolo: continue
+                    
+                    avg_yolo = np.mean(t_yolo)
+                    avg_model = np.mean(t_model) if t_model else 0.0
+                    total_time = avg_yolo + avg_model
+                    
+                    all_yolo.extend(t_yolo)
+                    all_model.extend(t_model)
+                    
+                    obj_name = self.OBJ_NAMES.get(obj_id, f"obj_{obj_id}")
+                    print(f"{obj_name:<12} {avg_yolo:.4f}     {avg_model:.4f}     {total_time:.4f}")
+                
+                print("-" * 60)
+                mean_yolo = np.mean(all_yolo) if all_yolo else 0.0
+                mean_model = np.mean(all_model) if all_model else 0.0
+                print(f"{'MEAN':<12} {mean_yolo:.4f}     {mean_model:.4f}     {mean_yolo+mean_model:.4f}")
+                print("="*60 + "\n")
+
             # Loop per classe con YOLO missed
             print(f"{'OBJECT':<12} {'COUNT':<8} {'MISSED':<8} {'ACCURACY':<10} {'MEAN ERR (cm)':<12}")
             print("-" * 60)
