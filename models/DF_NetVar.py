@@ -23,14 +23,13 @@ class DenseFusion_NetVar(nn.Module):
         self.head_dropout = nn.Dropout2d(p=0.15)
         
         #FUSION with RESIDUAL
-        # Input: 1024 -> Project to 512 -> Residual Block
         self.fusion_entry = nn.Sequential(
             nn.Conv2d(1024, 512, kernel_size=3, padding=1),
             nn.BatchNorm2d(512),
             nn.ReLU()
         )
         
-        # Residual Block interno alla fusione
+        # Residual Block 
         self.fusion_res = nn.Sequential(
             nn.Conv2d(512, 512, kernel_size=3, padding=1),
             nn.BatchNorm2d(512),
@@ -46,7 +45,6 @@ class DenseFusion_NetVar(nn.Module):
             nn.Conv2d(256, 4, 1)    
         )
         
-        # Trans Head
         self.trans_head = nn.Sequential(
             nn.Conv2d(520, 256, 1),
             nn.ReLU(),
@@ -58,7 +56,6 @@ class DenseFusion_NetVar(nn.Module):
     def forward(self, rgb, depth, bb_info, cam_params):
             bs = rgb.size(0)
             
-            # 1. Estrazione feature
             rgb_feat = self.rgb_extractor(rgb)       
             depth_3ch = torch.cat([depth, depth, depth], dim=1)
             depth_feat = self.depth_extractor(depth_3ch) 
@@ -66,24 +63,21 @@ class DenseFusion_NetVar(nn.Module):
             rgb_feat = self.feat_dropout(rgb_feat)
             depth_feat = self.feat_dropout(depth_feat)
             
-            # 2. Fusione Residuale
             combined = torch.cat([rgb_feat, depth_feat], dim=1)
             x_f = self.fusion_entry(combined)
             x_res = self.fusion_res(x_f)
             fused_feat = F.relu(x_f + x_res)
             
-            # 3. Preparazione input spaziali per le teste
+            # Spatial extension
             bb_spatial = bb_info.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, 7, 7)
             cam_spatial = cam_params.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, 7, 7)
 
-            # 4. Esecuzione Teste
-            # Rotazione (Fused + RGB)
+            #Features injection + predictions
             rot_input = torch.cat([fused_feat, rgb_feat], dim=1)
             pred_r_map = self.rot_head(rot_input)
             pred_r = self.global_pool(pred_r_map).view(bs, 4)
             pred_r = F.normalize(pred_r + self.eps, p=2, dim=1)
 
-            # XY (Fused + BB + Cam)
             trans_input = torch.cat([fused_feat, bb_spatial, cam_spatial], dim=1)
             pred_trans_map = self.trans_head(trans_input)
             pred_t = self.global_pool(pred_trans_map).view(bs, 3)

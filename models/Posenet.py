@@ -27,7 +27,6 @@ class PoseResNet(nn.Module):
         
         q = self.regressor(x)
         
-        # Normalizzazione: Un quaternione deve sempre avere lunghezza 1
         q = torch.nn.functional.normalize(q, p=2, dim=1)
         
         return q
