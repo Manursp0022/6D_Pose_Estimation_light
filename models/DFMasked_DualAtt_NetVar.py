@@ -50,7 +50,7 @@ class DenseFusion_Masked_DualAtt_NetVar(nn.Module):
             nn.Conv2d(256, 3, 1)    
         )
         
-        self.att_head = nn.Sequential(
+        self.conf_head = nn.Sequential(
             nn.Conv2d(1032, 128, 1),
             nn.ReLU(),
             nn.Conv2d(128, 1, 1) 
@@ -91,17 +91,17 @@ class DenseFusion_Masked_DualAtt_NetVar(nn.Module):
         trans_input = torch.cat([fused_feat, bb_spatial, cam_spatial], dim=1) 
         pred_trans_map = self.trans_head(trans_input) # [B, 3, 7, 7]
 
-        att_input = torch.cat([fused_feat, rgb_enhanced, bb_spatial, cam_spatial], dim=1) 
-        att_logits = self.att_head(att_input)   # [B, 1, 7, 7] (Logits)
+        conf_input = torch.cat([fused_feat, rgb_enhanced, bb_spatial, cam_spatial], dim=1) 
+        conf_logits = self.conf_head(conf_input)   # [B, 1, 7, 7] (Logits)
         
         pred_rot_map = pred_rot_map.view(batch_size, 4, -1)   # [B, 4, 49]
         pred_trans_map = pred_trans_map.view(batch_size, 3, -1) # [B, 3, 49] Ha senso ancora questa .view 
-        att_logits = att_logits.view(batch_size, 1, -1)     # [B, 1, 49]
+        conf_logits = conf_logits.view(batch_size, 1, -1)     # [B, 1, 49]
         
         pred_rot_map = F.normalize(pred_rot_map + self.eps, p=2, dim=1)
         
         # Softmax with Temperature onlogits
-        weights = F.softmax(att_logits / self.temperature, dim=2) #[B, 1, 49]
+        weights = F.softmax(conf_logits / self.temperature, dim=2) #[B, 1, 49]
         
         # Weighted Average
         pred_rot_global = torch.sum(pred_rot_map * weights, dim=2)   #[B, 4]

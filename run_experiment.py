@@ -8,7 +8,7 @@ from baseline_extension.Trainer_A100 import DAMFTurboTrainerA100
 if __name__ == "__main__":
     config = {
         # Percorsi
-        'dataset_root': "Path/To/Dataset",  
+        'dataset_root': "/Users/emanuelerosapepe/Desktop/test_YOLO/Linemod_preprocessed",  
         'split_val': "data/autosplit_val_ALL.txt",  
         'model_dir': 'checkpoints/', 
         'save_dir': 'checkpoints_results/',
@@ -58,6 +58,7 @@ if __name__ == "__main__":
         print("   Considera di aggiungere la regolarizzazione del paper.")
 
     """
+
     """
     config = {
         # Percorsi
@@ -179,6 +180,7 @@ if __name__ == "__main__":
     trainer = DAMFTurboTrainerA100(config)
     trainer.run()
     """
+
     """
     config = {
         # Percorsi
@@ -255,6 +257,7 @@ if __name__ == "__main__":
     evaluator.evaluate()
 
     """
+
     """
     config_eval = {
         'dataset_root': "/Users/emanuelerosapepe/Desktop/test_YOLO/Linemod_preprocessed",
@@ -266,3 +269,4 @@ if __name__ == "__main__":
         'temperature': 1.0,
         'num_points_mesh': 500
     }
+    """
