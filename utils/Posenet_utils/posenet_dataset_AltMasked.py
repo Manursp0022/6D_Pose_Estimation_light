@@ -22,14 +22,6 @@ OBJID_TO_MASK_PIXEL = {
 
 class LineModPoseDataset_AltMasked(Dataset):
     def __init__(self, dataset_root, mode='train', img_size=224, noise_factor=0.10, aug_intensity='aggressive'):
-        """
-        Args:
-            dataset_root (str): Percorso alla root del dataset (es. .../Linemod_preprocessed)
-                                Si aspetta che dentro ci sia la cartella 'data/01', 'data/02', ecc.
-            mode (str): 'train' o 'val'. Se 'train' legge train.txt, se 'val' legge test.txt.
-            img_size (int): Dimensione output.
-            noise_factor (float): Intensità data augmentation geometrica.
-        """
         self.dataset_root = dataset_root
         self.mode = mode
         self.img_size = img_size

@@ -6,6 +6,7 @@ from baseline_extension.PWDF_Eval_WMask import DAMF_Evaluator_WMask
 from baseline_extension.Trainer_A100 import DAMFTurboTrainerA100
 
 if __name__ == "__main__":
+
     config = {
         # Percorsi
         'dataset_root': "/Users/emanuelerosapepe/Desktop/test_YOLO/Linemod_preprocessed",  
@@ -16,16 +17,17 @@ if __name__ == "__main__":
         'training_mode': 'hard',
         'yolo_model_path': 'checkpoints/best_seg_YOLO.pt' ,
         'temperature': 1.5,
-        'batch_size': 32,
+        'batch_size': 1,
         'num_workers': 12,  
     }
     
     evaluator = DAMF_Evaluator_WMask(config)
-    results = evaluator.run()
+    evaluator.benchmark_inference(num_samples=500)
+    #results = evaluator.run()
     
-    print("\n Evaluation completed!")
-    print(f"Final Accuracy: {results['accuracy']:.2f}%")
-    print(f"Mean ADD: {results['mean_add_cm']:.2f} cm")
+    #print("\n Evaluation completed!")
+    #print(f"Final Accuracy: {results['accuracy']:.2f}%")
+    #print(f"Mean ADD: {results['mean_add_cm']:.2f} cm")
 
 
     """

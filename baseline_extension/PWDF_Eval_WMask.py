@@ -844,7 +844,125 @@ class DAMF_Evaluator_WMask:
             'mean_rot_deg': mean_rot_deg,
             'class_stats': class_stats
         }
-        
+            
+    def benchmark_inference(self, num_samples=200):
+            import time
+            print("\n" + "="*70)
+            print(f"BENCHMARKING INFERENCE (Batch Size = {self.cfg['batch_size']})")
+            print("="*70)
+            
+            yolo_times = []
+            posenet_times = []
+            
+            self.model.eval()
+            
+            print(" Warming up GPU...")
+            for i, batch in enumerate(self.val_loader):
+                if i >= 5: break
+                paths = batch['path']
+                depth_paths = batch['depth_path']
+                class_ids = batch['class_id'].numpy()
+                self._process_yolo_batch_wIoU(paths, depth_paths, class_ids)
+                
+            print(f" Running benchmark on {num_samples} real images...")
+            
+            with torch.no_grad():
+                for i, batch in enumerate(tqdm(self.val_loader, total=num_samples)):
+                    if i >= num_samples: break
+                    
+                    paths = batch['path']
+                    depth_paths = batch['depth_path']
+                    class_ids = batch['class_id'].numpy()
+
+                    if self.device.type == 'cuda': torch.cuda.synchronize()
+                    t_start_yolo = time.time()
+
+                    yolo_results = self.yolo_model(list(paths), conf=self.YOLO_CONF, verbose=False)
+                    
+                    if self.device.type == 'cuda': torch.cuda.synchronize()
+                    t_end_yolo = time.time()
+                    yolo_times.append((t_end_yolo - t_start_yolo) * 1000) # ms
+                    
+                    rgb_list, depth_list, mask_list, bbox_list = [], [], [], []
+                    valid_indices = []
+
+                    for idx in range(len(paths)):
+                        yolo_res = yolo_results[idx]
+                        obj_id = int(class_ids[idx])
+                        target_cls = self.LINEMOD_TO_YOLO[obj_id]
+                        
+                        best_idx = None
+                        best_conf = 0.0
+                        boxes = yolo_res.boxes
+                        for j, (cls, conf) in enumerate(zip(boxes.cls, boxes.conf)):
+                            if int(cls) == target_cls and float(conf) > best_conf:
+                                best_conf = float(conf)
+                                best_idx = j
+                        
+                        if best_idx is None: continue
+                        
+                        rgb_img = cv2.cvtColor(cv2.imread(paths[idx]), cv2.COLOR_BGR2RGB)
+                        depth_img = cv2.imread(depth_paths[idx], cv2.IMREAD_UNCHANGED).astype(np.float32) / 1000.0
+                        
+                        xyxy = boxes.xyxy[best_idx].cpu().numpy()
+                        bbox = [xyxy[0], xyxy[1], xyxy[2]-xyxy[0], xyxy[3]-xyxy[1]]
+                        
+                        mask_data = yolo_res.masks.data[best_idx].cpu().numpy()
+                        if mask_data.shape != (self.img_h, self.img_w):
+                            mask_data = cv2.resize(mask_data, (self.img_w, self.img_h), interpolation=cv2.INTER_NEAREST)
+                        mask = (mask_data > 0.5).astype(np.uint8) * 255
+                        
+                        rgb_c = crop_square_resize(rgb_img, bbox, self.img_size, is_depth=False)
+                        depth_c = crop_square_resize(depth_img, bbox, self.img_size, is_depth=True)
+                        mask_c = crop_square_resize(mask, bbox, self.img_size, is_depth=True)
+                        mask_c = (mask_c > 127).astype(np.float32)
+                        
+                        rgb_list.append(self.transform(rgb_c))
+                        depth_list.append(torch.from_numpy(depth_c).float().unsqueeze(0))
+                        mask_list.append(torch.from_numpy(mask_c).float().unsqueeze(0))
+                        
+                        x, y, w, h = bbox
+                        bbox_norm = torch.tensor([(x+w/2)/self.img_w, (y+h/2)/self.img_h, w/self.img_w, h/self.img_h], dtype=torch.float32)
+                        bbox_list.append(bbox_norm)
+                        valid_indices.append(idx)
+
+                    if not valid_indices: continue
+
+                    # Prepara batch
+                    rgb_batch = torch.stack(rgb_list).to(self.device)
+                    depth_batch = torch.stack(depth_list).to(self.device)
+                    mask_batch = torch.stack(mask_list).to(self.device)
+                    bbox_batch = torch.stack(bbox_list).to(self.device)
+                    
+                    B_size = rgb_batch.shape[0]
+                    cam_params = self.cam_params_norm.unsqueeze(0).repeat(B_size, 1).to(self.device)
+
+                    # ==========================================
+                    # 2. MISURA POSENET (DenseFusion)
+                    # ==========================================
+                    if self.device.type == 'cuda': torch.cuda.synchronize()
+                    t_start_pose = time.time()
+                    
+                    _ = self.model(rgb_batch, depth_batch, bbox_batch, cam_params, mask_batch)
+                    
+                    if self.device.type == 'cuda': torch.cuda.synchronize()
+                    t_end_pose = time.time()
+                    posenet_times.append((t_end_pose - t_start_pose) * 1000) # ms
+
+            # --- STATISTICHE ---
+            yolo_arr = np.array(yolo_times)
+            pose_arr = np.array(posenet_times)
+            
+            print("\n📊 RESULTS (in milliseconds):")
+            print(f"   Images Processed: {len(yolo_arr)}")
+            print("-" * 40)
+            print(f"   YOLO Inference:    Mean: {np.mean(yolo_arr):.2f} ms | Std: {np.std(yolo_arr):.2f} ms")
+            print(f"   PoseNet Inference: Mean: {np.mean(pose_arr):.2f} ms | Std: {np.std(pose_arr):.2f} ms")
+            print("-" * 40)
+            print(f"   Total Model Latency: {np.mean(yolo_arr) + np.mean(pose_arr):.2f} ms")
+            print(f"   Approximate FPS (Models only): {1000 / (np.mean(yolo_arr) + np.mean(pose_arr)):.1f} FPS")
+            print("="*70 + "\n")
+            
     def _print_report(self, accuracy, mean_add, mean_trans, mean_rot_cm, mean_rot_deg, 
                         mean_tx, mean_ty, mean_tz,
                         total, total_yolo_missed, class_stats):
