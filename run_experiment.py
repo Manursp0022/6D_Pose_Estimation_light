@@ -25,9 +25,6 @@ if __name__ == "__main__":
     evaluator = DAMF_Evaluator_WMask(config)
     conf_results = evaluator.analyze_confidence_head(num_batches=32, save_plots=True)
     
-    # =========================================
-    # STEP 1: Analizza la confidence head
-    # =========================================
     print("\n" + "="*70)
     print("STEP 1: Analyzing confidence head...")
     print("="*70)    
