@@ -182,11 +182,10 @@ tiny-imagenet-200/
 *.tar.gz
 
 # Checkpoints (modelli salvati)
-checkpoints/*
 !checkpoints/.gitkeep
-*.pth
-*.pt
-*.ckpt
+
+# Linemod segmentation data training results and plots
+linemod-segmentation/
 
 # Wandb logs
 wandb/
@@ -198,3 +197,6 @@ wandb/
 *.swp
 *.swo
 .DS_Store
+
+checkpoints/*.pth
+run_experiment.py

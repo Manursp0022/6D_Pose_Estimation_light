@@ -1,0 +1,180 @@
+import numpy as np
+import torch
+import cv2
+from scipy.spatial.transform import Rotation as R
+
+def matrix_to_quaternion(R_matrix):
+    r = R.from_matrix(R_matrix)
+    # Scipy returns [x, y, z, w], but PyTorch/Standard often uses [w, x, y, z]    
+    quat_scipy = r.as_quat() 
+    # Let's reorder in [w, x, y, z]
+    quat_wxyz = np.array([quat_scipy[3], quat_scipy[0], quat_scipy[1], quat_scipy[2]])
+    return quat_wxyz
+
+def quaternion_to_matrix(quat):
+    """
+    Convert quaternion [w, x, y, z] to rotation matrix.
+    """
+    w, x, y, z = quat
+    R = np.array([
+        [1 - 2*y*y - 2*z*z, 2*x*y - 2*z*w, 2*x*z + 2*y*w],
+        [2*x*y + 2*z*w, 1 - 2*x*x - 2*z*z, 2*y*z - 2*x*w],
+        [2*x*z - 2*y*w, 2*y*z + 2*x*w, 1 - 2*x*x - 2*y*y]
+    ])
+    return R
+
+def quaternion_to_matrix_np(quat):
+    """Convert quaternion [w, x, y, z] to rotation matrix."""
+    quat_xyzw = np.array([quat[1], quat[2], quat[3], quat[0]])
+    return Rot.from_quat(quat_xyzw).as_matrix()
+
+
+def matrix_to_quaternion_np(R):
+    """Convert rotation matrix to quaternion [w, x, y, z]."""
+    r = Rot.from_matrix(R)
+    quat_xyzw = r.as_quat()
+    return np.array([quat_xyzw[3], quat_xyzw[0], quat_xyzw[1], quat_xyzw[2]])
+
+def crop_square_resize(img, bbox, target_size=224, is_depth=False):
+    """
+    Esegue un ritaglio quadrato centrato sul bbox fornito e ridimensiona.
+    Supporta sia immagini RGB che depth.
+    
+    Args:
+        img: Immagine RGB (H, W, 3) o depth (H, W) o (H, W, 1)
+        bbox: Bounding box [x, y, w, h]
+        target_size: Dimensione target (default 224)
+        is_depth: True se è un'immagine depth
+    """
+    h_img, w_img = img.shape[:2]
+    x, y, w, h = bbox
+    
+    # --- 1. SQUARE PADDING CALCULATION ---
+    pad_factor = 1.2 
+    side = max(w, h) * pad_factor
+    
+    center_x = x + w / 2
+    center_y = y + h / 2
+    
+    x1 = int(center_x - side / 2)
+    y1 = int(center_y - side / 2)
+    x2 = int(center_x + side / 2)
+    y2 = int(center_y + side / 2)
+
+    # --- 2. CROP CON PADDING ---
+    pad_left = max(0, -x1)
+    pad_top = max(0, -y1)
+    pad_right = max(0, x2 - w_img)
+    pad_bottom = max(0, y2 - h_img)
+
+    crop_x1 = max(0, x1)
+    crop_y1 = max(0, y1)
+    crop_x2 = min(w_img, x2)
+    crop_y2 = min(h_img, y2)
+
+    # Ritaglio
+    crop = img[crop_y1:crop_y2, crop_x1:crop_x2]
+
+    # Padding con zero (va bene per depth, zero = nessuna profondità)
+    if pad_left > 0 or pad_right > 0 or pad_top > 0 or pad_bottom > 0:
+        if is_depth:
+            # Per depth: padding value = 0 (2D array)
+            crop = cv2.copyMakeBorder(crop, pad_top, pad_bottom, pad_left, pad_right, 
+                                     cv2.BORDER_CONSTANT, value=0)
+        else:
+            # Per RGB: padding value = [0,0,0]
+            crop = cv2.copyMakeBorder(crop, pad_top, pad_bottom, pad_left, pad_right, 
+                                     cv2.BORDER_CONSTANT, value=[0,0,0])
+
+    # --- 3. RESIZE ---
+    try:
+        if is_depth:
+            # Per depth: usa INTER_NEAREST per preservare i valori esatti
+            # oppure INTER_LINEAR se vuoi interpolazione smooth
+            final_img = cv2.resize(crop, (target_size, target_size), 
+                                  interpolation=cv2.INTER_NEAREST)
+        else:
+            final_img = cv2.resize(crop, (target_size, target_size), 
+                                  interpolation=cv2.INTER_LINEAR)
+    except Exception:
+        if is_depth:
+            final_img = np.zeros((target_size, target_size), dtype=crop.dtype)
+        else:
+            final_img = np.zeros((target_size, target_size, 3), dtype=np.uint8)
+        
+    return final_img
+
+def backproject_bbox_to_3d(bboxes, depths, fx, fy, cx, cy):
+    """
+    Back-project batch of 2D bounding boxes to 3D coordinates using pinhole camera model.
+    
+    Parameters:
+    -----------
+    bboxes : torch.Tensor
+        Bounding boxes with shape (B, 4) in format (x, y, w, h) where:
+        - x, y: bottom-left corner coordinates in image
+        - w, h: width and height of the bounding box
+    depths : torch.Tensor
+        Depths (Z distances) from camera to objects with shape (B,) or (B, 1)
+    fx : float or torch.Tensor
+        Focal length in x direction (pixels)
+    fy : float or torch.Tensor
+        Focal length in y direction (pixels)
+    cx : float or torch.Tensor
+        Principal point x-coordinate (pixels)
+    cy : float or torch.Tensor
+        Principal point y-coordinate (pixels)
+    
+    Returns:
+    --------
+    torch.Tensor : 3D coordinates with shape (B, 3) containing (X, Y, Z) for each box center
+    """
+    # Ensure depths has shape (B, 1) for broadcasting
+    if depths.dim() == 1:
+        depths = depths.unsqueeze(1)
+    
+    # Extract bounding box components
+    x = bboxes[:, 0:1]  # (B, 1)
+    y = bboxes[:, 1:2]  # (B, 1)
+    w = bboxes[:, 2:3]  # (B, 1)
+    h = bboxes[:, 3:4]  # (B, 1)
+    
+    # Calculate center of bounding boxes in image coordinates
+    center_u = x + w / 2.0  # (B, 1)
+    center_v = y + h / 2.0  # (B, 1)
+    
+    # Back-project to 3D
+    X = (center_u - cx) * depths / fx  # (B, 1)
+    Y = (center_v - cy) * depths / fy  # (B, 1)
+    Z = depths  # (B, 1)
+    
+    # Concatenate to form (B, 3) tensor
+    coords_3d = torch.cat([X, Y, Z], dim=1)  # (B, 3)
+    
+    return coords_3d
+
+def solve_pinhole_diameter(bboxes, intrinsics, diameters_batch):
+    # Calculate diagonal pixels of the bbox
+    w_pixel = bboxes[:, 2]
+    h_pixel = bboxes[:, 3]
+    d_pixel = torch.sqrt(w_pixel**2 + h_pixel**2)
+    
+    fx = intrinsics[:, 0]  # Primo valore
+    fy = intrinsics[:, 1]  # Secondo valore
+    cx = intrinsics[:, 2]  # Terzo valore
+    cy = intrinsics[:, 3]  # Quarto valore
+    
+    # Average focal length calculation
+    f_avg = (fx + fy) / 2
+
+    # Z = (f * Actual_Diameter) / Pixel_Diagonal
+    Z = (f_avg * diameters_batch) / d_pixel
+
+    # X and Y
+    # (u_center and v_center are the bbox center coordinates)
+    u_center, v_center = bboxes[:, 0], bboxes[:, 1]
+    
+    X = ((u_center - cx) * Z) / fx
+    Y = ((v_center - cy) * Z) / fy
+
+    return torch.stack([X, Y, Z], dim=1)
