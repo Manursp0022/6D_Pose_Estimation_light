@@ -235,9 +235,9 @@ class DAMF_Evaluator_WMask:
             # Rimuovi il prefisso '_orig_mod.' se presente
             key = key.replace('_orig_mod.', '') if key.startswith('_orig_mod.') else key
             
-            # Gestisci il rename da conf_head a att_head
-            if "conf_head" in key:
-                key = key.replace("conf_head", "att_head")
+            # # Gestisci il rename da conf_head a att_head
+            # if "conf_head" in key:
+            #     key = key.replace("conf_head", "att_head")
                 
             new_state_dict[key] = value
         return new_state_dict
